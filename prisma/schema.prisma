@@ -1,0 +1,12 @@
+// Modelo gerado a partir do banco dbsamu (prisma db pull).
+// A fonte da verdade e o DDL em db/01_estrutura.sql, que segue o padrao
+// de nomenclatura do projeto; este arquivo espelha o banco, nao o contrario.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}

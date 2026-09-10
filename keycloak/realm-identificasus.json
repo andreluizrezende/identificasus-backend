@@ -1,0 +1,142 @@
+{
+  "realm": "identificasus",
+  "displayName": "IdentificaSUS",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "resetPasswordAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "quickLoginCheckMilliSeconds": 1000,
+  "minimumQuickLoginWaitSeconds": 60,
+  "passwordPolicy": "length(10) and notUsername and notEmail and passwordHistory(3) and hashAlgorithm(pbkdf2-sha512)",
+  "accessTokenLifespan": 900,
+  "ssoSessionIdleTimeout": 259200,
+  "ssoSessionMaxLifespan": 259200,
+  "offlineSessionIdleTimeout": 259200,
+  "roles": {
+    "realm": [
+      {
+        "name": "socorrista",
+        "description": "Captura em campo: abre caso e registra atributos"
+      },
+      {
+        "name": "regulador",
+        "description": "Central de Regulacao: fila de adjudicacao"
+      },
+      {
+        "name": "adjudicador",
+        "description": "Confere e decide vinculo"
+      },
+      {
+        "name": "administrador",
+        "description": "Cadastros, bases, aparelhos e usuarios"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "identificasus-api",
+      "name": "IdentificaSUS - API do Nucleo de Resolucao de Identidade",
+      "description": "Recurso protegido. Existe para ser audiencia do token, nao para iniciar login.",
+      "enabled": true,
+      "bearerOnly": true,
+      "publicClient": false,
+      "protocol": "openid-connect"
+    },
+    {
+      "clientId": "identificasus-app",
+      "name": "IdentificaSUS - aplicativo de campo (PWA)",
+      "description": "Cliente publico com concessao direta. Ver keycloak/LEIA-ME.md para o porque.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "attributes": {
+        "access.token.lifespan": "900",
+        "pkce.code.challenge.method": ""
+      },
+      "protocolMappers": [
+        {
+          "name": "finalidade",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "purpose",
+            "claim.name": "purpose",
+            "jsonType.label": "String",
+            "multivalued": "false",
+            "aggregate.attrs": "false",
+            "access.token.claim": "true",
+            "id.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "audiencia-da-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "identificasus-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "identificasus-admin",
+      "name": "IdentificaSUS - conta de servico administrativa",
+      "description": "Usada apenas pelos scripts de operacao e pela troca de senha. Nenhuma pessoa entra por aqui.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "secret": "trocar-em-qualquer-ambiente-que-nao-seja-o-seu-notebook"
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-identificasus-admin",
+      "enabled": true,
+      "serviceAccountClientId": "identificasus-admin",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users"
+        ]
+      }
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "name": "declarative-user-profile",
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\": [{\"name\": \"username\", \"displayName\": \"${username}\", \"validations\": {\"length\": {\"min\": 3, \"max\": 255}, \"username-prohibited-characters\": {}, \"up-username-not-idn-homograph\": {}}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\"]}, \"multivalued\": false}, {\"name\": \"email\", \"displayName\": \"${email}\", \"validations\": {\"email\": {}, \"length\": {\"max\": 255}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\"]}, \"multivalued\": false}, {\"name\": \"firstName\", \"displayName\": \"${firstName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\"]}, \"multivalued\": false}, {\"name\": \"lastName\", \"displayName\": \"${lastName}\", \"validations\": {\"length\": {\"max\": 255}, \"person-name-prohibited-characters\": {}}, \"required\": {\"roles\": [\"user\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\"]}, \"multivalued\": false}, {\"name\": \"purpose\", \"displayName\": \"Finalidade do tratamento (LGPD art. 6o)\", \"validations\": {\"options\": {\"options\": [\"ASSISTENCIAL\", \"AUDITORIA\", \"PESQUISA\", \"ADMINISTRACAO\"]}}, \"required\": {\"roles\": [\"admin\"]}, \"permissions\": {\"view\": [\"admin\", \"user\"], \"edit\": [\"admin\"]}, \"multivalued\": false}], \"groups\": [{\"name\": \"user-metadata\", \"displayHeader\": \"Metadados\", \"displayDescription\": \"Atributos do modelo\"}], \"unmanagedAttributePolicy\": \"ADMIN_EDIT\"}"
+          ]
+        }
+      }
+    ]
+  }
+}
