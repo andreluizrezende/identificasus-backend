@@ -31,6 +31,7 @@
     "@nestjs/platform-express": "^10.4.4",
     "@nestjs/swagger": "^7.4.2",
     "@nestjs/terminus": "^10.2.3",
+    "@vercel/blob": "^2.8.0",
     "amqplib": "^0.10.4",
     "bcryptjs": "^2.4.3",
     "helmet": "^8.0.0",

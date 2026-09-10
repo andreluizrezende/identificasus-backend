@@ -99,6 +99,7 @@ src/
     ├── caso/           caso NN
     ├── captura/        gravação versionada de atributo
     ├── sincronizacao/  lote idempotente vindo do aparelho
+    ├── midia/          token de upload direto pro Vercel Blob (identificasus-fotos)
     ├── recuperacao/    "perdi minha senha"
     └── auditoria/      trilha encadeada (módulo-folha)
 db/

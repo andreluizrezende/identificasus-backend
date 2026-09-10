@@ -9,6 +9,7 @@ import { AuditoriaModule } from './modulos/auditoria/auditoria.module';
 import { CapturaModule } from './modulos/captura/captura.module';
 import { CasoModule } from './modulos/caso/caso.module';
 import { CatalogoModule } from './modulos/catalogo/catalogo.module';
+import { MidiaModule } from './modulos/midia/midia.module';
 import { RecuperacaoModule } from './modulos/recuperacao/recuperacao.module';
 import { SessaoModule } from './modulos/sessao/sessao.module';
 import { SincronizacaoModule } from './modulos/sincronizacao/sincronizacao.module';
@@ -28,6 +29,7 @@ import { TurnoModule } from './modulos/turno/turno.module';
     CapturaModule,
     TurnoModule,
     SincronizacaoModule,
+    MidiaModule,
     RecuperacaoModule,
     SessaoModule,
   ],
