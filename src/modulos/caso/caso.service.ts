@@ -116,8 +116,13 @@ export class CasoService {
   /**
    * Quem vê um caso: quem o abriu, e quem estava na guarnição do turno em que
    * ele foi aberto. A base inteira, não — proximidade não é necessidade.
+   *
+   * (!) PÚBLICO, E NÃO PRIVADO: `SincronizacaoService` reaplica a mesma regra
+   *     para listar e resolver divergências (`mob_divergencia` só junta a
+   *     `mob_caso` por `id_caso`, sem visibilidade própria). Duas cópias do
+   *     mesmo filtro divergiriam na primeira mudança de regra de acesso.
    */
-  private static readonly VISIVEL_PARA = `
+  static readonly VISIVEL_PARA = `
     (c.id_usuario_abertura = ?
      OR c.id_turno IN (SELECT g.id_turno FROM mob_turno_guarnicao g WHERE g.id_usuario = ?))`;
 

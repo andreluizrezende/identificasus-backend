@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   esquemaConteudoAtributo, esquemaConteudoCaso, esquemaConteudoEstado,
-  esquemaConteudoMidia, esquemaEventoEntrada, esquemaLote,
+  esquemaConteudoMidia, esquemaEventoEntrada, esquemaLote, esquemaResolucaoDivergencia,
 } from './sincronizacao.esquemas';
 
 describe('esquemaConteudoCaso', () => {
@@ -79,6 +79,22 @@ describe('esquemaEventoEntrada e esquemaLote', () => {
     ).toBe(false);
     expect(
       esquemaLote.safeParse({ coDispositivo: 'D1', eventos: Array(200).fill(evento) }).success,
+    ).toBe(true);
+  });
+});
+
+describe('esquemaResolucaoDivergencia', () => {
+  it('so aceita as tres resolucoes do check constraint de mob_divergencia', () => {
+    expect(esquemaResolucaoDivergencia.safeParse({ resolucao: 'DISPOSITIVO' }).success).toBe(true);
+    expect(esquemaResolucaoDivergencia.safeParse({ resolucao: 'SERVIDOR' }).success).toBe(true);
+    expect(esquemaResolucaoDivergencia.safeParse({ resolucao: 'AMBOS' }).success).toBe(true);
+    expect(esquemaResolucaoDivergencia.safeParse({ resolucao: 'PENDENTE' }).success).toBe(false);
+  });
+
+  it('justificativa e opcional', () => {
+    expect(esquemaResolucaoDivergencia.safeParse({ resolucao: 'SERVIDOR' }).success).toBe(true);
+    expect(
+      esquemaResolucaoDivergencia.safeParse({ resolucao: 'AMBOS', justificativa: 'duvida' }).success,
     ).toBe(true);
   });
 });

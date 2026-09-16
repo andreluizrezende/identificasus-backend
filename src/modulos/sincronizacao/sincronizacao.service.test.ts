@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import { SincronizacaoService } from './sincronizacao.service';
 import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
@@ -20,6 +20,8 @@ function montar(opts: {
   eventoExistente?: (coIdempotencia: string) => { id_evento: number; st_evento: string };
   idPorCodigo?: number | null;
   valorVigente?: ValorVigente | null;
+  divergenciasPendentes?: unknown[];
+  divergenciaParaResolver?: unknown[];
 }) {
   let proximoId = 100;
   const executar = vi.fn().mockImplementation(async (_fin: string, sql: string, params: unknown[] = []) => {
@@ -33,6 +35,10 @@ function montar(opts: {
   });
   const consultar = vi.fn().mockImplementation(async (_fin: string, sql: string, params: unknown[] = []) => {
     if (sql.includes('FROM mob_dispositivo')) return opts.dispositivoLinhas ?? [DISPOSITIVO];
+    if (sql.includes('FROM mob_divergencia') && sql.includes('FOR UPDATE')) {
+      return opts.divergenciaParaResolver ?? [];
+    }
+    if (sql.includes('FROM mob_divergencia')) return opts.divergenciasPendentes ?? [];
     if (sql.includes('FROM mob_evento_sincronizacao')) {
       const coIdempotencia = params[0] as string;
       const existente = opts.eventoExistente?.(coIdempotencia);
@@ -40,7 +46,19 @@ function montar(opts: {
     }
     return [];
   });
-  const acesso = { executar, consultar } as unknown as BancoPorFinalidade;
+  const emTransacao = vi.fn().mockImplementation(
+    async (
+      _fin: string,
+      corpo: (
+        exec: (sql: string, p?: unknown[]) => Promise<unknown>,
+        cons: (sql: string, p?: unknown[]) => Promise<unknown[]>,
+      ) => Promise<unknown>,
+    ) => corpo(
+      (sql: string, p: unknown[] = []) => executar('ASSISTENCIAL', sql, p),
+      (sql: string, p: unknown[] = []) => consultar('ASSISTENCIAL', sql, p),
+    ),
+  );
+  const acesso = { executar, consultar, emTransacao } as unknown as BancoPorFinalidade;
 
   const casos = {
     idPorCodigo: vi.fn().mockResolvedValue('idPorCodigo' in opts ? opts.idPorCodigo : 1),
@@ -57,7 +75,7 @@ function montar(opts: {
   const turnos = { ativoDe: vi.fn().mockResolvedValue(null) } as unknown as TurnoService;
   const auditoria = { registrar: vi.fn().mockResolvedValue('hash') } as unknown as AuditoriaService;
 
-  return { acesso, casos, captura, turnos, auditoria, executar, consultar };
+  return { acesso, casos, captura, turnos, auditoria, executar, consultar, emTransacao };
 }
 
 function eventoEstado(coIdempotencia: string, coCaso = 'C1'): Lote['eventos'][number] {
@@ -264,6 +282,118 @@ describe('lote misto', () => {
       expect.objectContaining({
         acao: 'lote_sincronizado',
         detalhe: { recebidos: 2, aplicados: 1, divergentes: 0, recusados: 1 },
+      }),
+    );
+  });
+});
+
+describe('listarPendentes', () => {
+  it('devolve as divergencias pendentes visiveis ao profissional', async () => {
+    const linha = {
+      id_divergencia: 5, co_idempotencia: '123e4567-e89b-12d3-a456-426614174000',
+      co_caso: 'C1', co_atributo: 'SEXO_APARENTE', no_atributo: 'Sexo aparente',
+      ds_valor_dispositivo: 'MASCULINO', ds_valor_servidor: 'FEMININO',
+      no_autor_servidor: 'Beto', st_deteccao: '2027-01-01 10:00:00.000000',
+    };
+    const { acesso, casos, captura, turnos, auditoria } = montar({ divergenciasPendentes: [linha] });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+
+    const r = await servico.listarPendentes(1);
+
+    expect(r).toEqual([{
+      idDivergencia: 5,
+      coIdempotencia: linha.co_idempotencia,
+      coCaso: 'C1',
+      coAtributo: 'SEXO_APARENTE',
+      noAtributo: 'Sexo aparente',
+      valorDispositivo: 'MASCULINO',
+      valorServidor: 'FEMININO',
+      autorServidor: 'Beto',
+      detectadaEm: linha.st_deteccao,
+    }]);
+  });
+
+  it('sem divergencias pendentes, devolve lista vazia', async () => {
+    const { acesso, casos, captura, turnos, auditoria } = montar({ divergenciasPendentes: [] });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+    expect(await servico.listarPendentes(1)).toEqual([]);
+  });
+});
+
+describe('resolver divergencia (RF-11.02)', () => {
+  const linhaBase = {
+    id_divergencia: 5, id_caso: 1, st_resolucao: 'PENDENTE', co_atributo: 'SEXO_APARENTE',
+    ds_payload: JSON.stringify({ coAtributo: 'SEXO_APARENTE', coProcedencia: 'OBSERVADO', coValor: 'MASCULINO' }),
+  };
+
+  it('DISPOSITIVO relê o payload original do evento e regrava com a procedencia correta', async () => {
+    const { acesso, casos, captura, turnos, auditoria, executar } = montar({
+      divergenciaParaResolver: [linhaBase],
+    });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+
+    await servico.resolver(5, 9, { resolucao: 'DISPOSITIVO' });
+
+    expect(captura.registrarAtributo).toHaveBeenCalledWith({
+      idCaso: 1, coAtributo: 'SEXO_APARENTE', coProcedencia: 'OBSERVADO',
+      coValor: 'MASCULINO', dsValor: null, usuarioId: 9,
+    });
+    expect(executar).toHaveBeenCalledWith(
+      'ASSISTENCIAL', expect.stringContaining('UPDATE mob_divergencia'), ['DISPOSITIVO', 9, null, 5],
+    );
+  });
+
+  it('SERVIDOR nao regrava atributo: o valor vigente do servidor ja e o que vale', async () => {
+    const { acesso, casos, captura, turnos, auditoria } = montar({ divergenciaParaResolver: [linhaBase] });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+
+    await servico.resolver(5, 9, { resolucao: 'SERVIDOR' });
+
+    expect(captura.registrarAtributo).not.toHaveBeenCalled();
+  });
+
+  it('AMBOS tambem nao regrava atributo, so registra a duvida para a regulacao revisar', async () => {
+    const { acesso, casos, captura, turnos, auditoria, executar } = montar({
+      divergenciaParaResolver: [linhaBase],
+    });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+
+    await servico.resolver(5, 9, { resolucao: 'AMBOS', justificativa: 'nao tenho certeza de qual esta certo' });
+
+    expect(captura.registrarAtributo).not.toHaveBeenCalled();
+    expect(executar).toHaveBeenCalledWith(
+      'ASSISTENCIAL', expect.stringContaining('UPDATE mob_divergencia'),
+      ['AMBOS', 9, 'nao tenho certeza de qual esta certo', 5],
+    );
+  });
+
+  it('divergencia inexistente ou de outro profissional devolve NotFound', async () => {
+    const { acesso, casos, captura, turnos, auditoria } = montar({ divergenciaParaResolver: [] });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+
+    await expect(servico.resolver(999, 9, { resolucao: 'SERVIDOR' })).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('divergencia ja resolvida recusa nova decisao', async () => {
+    const { acesso, casos, captura, turnos, auditoria } = montar({
+      divergenciaParaResolver: [{ ...linhaBase, st_resolucao: 'DISPOSITIVO' }],
+    });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+
+    await expect(servico.resolver(5, 9, { resolucao: 'SERVIDOR' })).rejects.toBeInstanceOf(ConflictException);
+    expect(captura.registrarAtributo).not.toHaveBeenCalled();
+  });
+
+  it('audita a resolucao', async () => {
+    const { acesso, casos, captura, turnos, auditoria } = montar({ divergenciaParaResolver: [linhaBase] });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+
+    await servico.resolver(5, 9, { resolucao: 'SERVIDOR' });
+
+    expect(auditoria.registrar).toHaveBeenCalledWith(
+      expect.objectContaining({
+        acao: 'divergencia_resolvida',
+        detalhe: { idDivergencia: 5, resolucao: 'SERVIDOR' },
       }),
     );
   });

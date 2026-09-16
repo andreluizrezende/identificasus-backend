@@ -74,3 +74,10 @@ export interface RespostaLote {
   }>;
   recusados: Array<{ coIdempotencia: string; motivo: string }>;
 }
+
+/** Decisão humana sobre uma divergência pendente (RF-11.02, M12 do módulo de campo). */
+export const esquemaResolucaoDivergencia = z.object({
+  resolucao: z.enum(['DISPOSITIVO', 'SERVIDOR', 'AMBOS']),
+  justificativa: z.string().trim().max(300).nullish(),
+});
+export type ResolucaoDivergencia = z.infer<typeof esquemaResolucaoDivergencia>;

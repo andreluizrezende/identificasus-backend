@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException, ConflictException, Injectable, Logger, NotFoundException,
+} from '@nestjs/common';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
@@ -8,12 +10,44 @@ import { TurnoService } from '@/modulos/turno/turno.service';
 import {
   esquemaConteudoAtributo, esquemaConteudoCaso, esquemaConteudoEstado, esquemaConteudoMidia,
 } from './sincronizacao.esquemas';
-import type { EventoEntrada, Lote, RespostaLote } from './sincronizacao.esquemas';
+import type { EventoEntrada, Lote, ResolucaoDivergencia, RespostaLote } from './sincronizacao.esquemas';
 
 const DUPLICADO = 'ER_DUP_ENTRY';
 
 interface LinhaDispositivo extends RowDataPacket { id_dispositivo: number; id_base: number }
 interface LinhaEvento extends RowDataPacket { id_evento: number; st_evento: string }
+
+export interface DivergenciaPendente {
+  idDivergencia: number;
+  coIdempotencia: string;
+  coCaso: string;
+  coAtributo: string;
+  noAtributo: string;
+  valorDispositivo: string;
+  valorServidor: string;
+  autorServidor: string | null;
+  detectadaEm: string;
+}
+
+interface LinhaDivergenciaPendente extends RowDataPacket {
+  id_divergencia: number;
+  co_idempotencia: string;
+  co_caso: string;
+  co_atributo: string;
+  no_atributo: string;
+  ds_valor_dispositivo: string;
+  ds_valor_servidor: string;
+  no_autor_servidor: string | null;
+  st_deteccao: string;
+}
+
+interface LinhaDivergenciaParaResolver extends RowDataPacket {
+  id_divergencia: number;
+  id_caso: number;
+  st_resolucao: string;
+  co_atributo: string;
+  ds_payload: unknown;
+}
 
 /**
  * Aplicação do lote vindo do aparelho.
@@ -51,6 +85,116 @@ export class SincronizacaoService {
     private readonly turnos: TurnoService,
     private readonly auditoria: AuditoriaService,
   ) {}
+
+  /**
+   * Divergências pendentes visíveis ao profissional — mesma regra de
+   * visibilidade de `CasoService.porCodigo`: quem abriu o caso, ou quem estava
+   * na guarnição do turno em que ele foi aberto.
+   */
+  async listarPendentes(usuarioId: number): Promise<DivergenciaPendente[]> {
+    const linhas = await this.acesso.consultar<LinhaDivergenciaPendente>(
+      'ASSISTENCIAL',
+      `SELECT d.id_divergencia, e.co_idempotencia, c.co_caso,
+              t.co_atributo, t.no_atributo,
+              d.ds_valor_dispositivo, d.ds_valor_servidor,
+              u.no_usuario AS no_autor_servidor, d.st_deteccao
+         FROM mob_divergencia d
+         JOIN mob_caso c ON c.id_caso = d.id_caso
+         JOIN mob_tipo_atributo t ON t.id_tipo_atributo = d.id_tipo_atributo
+         JOIN mob_evento_sincronizacao e ON e.id_evento = d.id_evento
+         LEFT JOIN mob_usuario u ON u.id_usuario = d.id_usuario_servidor
+        WHERE d.st_resolucao = 'PENDENTE' AND ${CasoService.VISIVEL_PARA}
+        ORDER BY d.st_deteccao`,
+      [usuarioId, usuarioId],
+    );
+    return linhas.map((l) => ({
+      idDivergencia: l.id_divergencia,
+      coIdempotencia: l.co_idempotencia,
+      coCaso: l.co_caso,
+      coAtributo: l.co_atributo,
+      noAtributo: l.no_atributo,
+      valorDispositivo: l.ds_valor_dispositivo,
+      valorServidor: l.ds_valor_servidor,
+      autorServidor: l.no_autor_servidor,
+      detectadaEm: l.st_deteccao,
+    }));
+  }
+
+  /**
+   * Decide qual valor vale agora (RF-11.02). Nenhum lado é apagado: a versão
+   * anterior de `mob_caso_atributo` só é rebaixada a `lg_vigente = 0` por
+   * `sp_mob_registra_atributo`, nunca excluída.
+   *
+   * (!) `SERVIDOR` E `AMBOS` NÃO ESCREVEM ATRIBUTO NENHUM. O valor vigente do
+   *     servidor já é o que vale; regravá-lo criaria uma versão nova do mesmo
+   *     valor, com o profissional de campo como autor de um dado que ele não
+   *     mediu. As duas resoluções diferem só no rótulo: `SERVIDOR` diz "a
+   *     versão do servidor está certa", `AMBOS` diz "não sei dizer qual está
+   *     certa, guarde a dúvida para a regulação revisar" — o schema não
+   *     permite duas versões vigentes ao mesmo tempo para o mesmo atributo, e
+   *     por isso a diferença fica só na trilha, não no dado.
+   *
+   * (!) `DISPOSITIVO` RELÊ O PAYLOAD ORIGINAL DO EVENTO, e não recompõe o valor
+   *     a partir de `ds_valor_dispositivo`. `mob_divergencia` guarda o valor já
+   *     formatado para exibição, mas não a procedência (OBSERVADO/INFORMADO/
+   *     ESTIMADO) — só o payload JSON do evento tem isso, e a procedência é
+   *     obrigatória em `sp_mob_registra_atributo`.
+   */
+  async resolver(
+    idDivergencia: number, usuarioId: number, dados: ResolucaoDivergencia,
+  ): Promise<void> {
+    await this.acesso.emTransacao('ASSISTENCIAL', async (executar, consultar) => {
+      const linhas = await consultar<LinhaDivergenciaParaResolver>(
+        `SELECT d.id_divergencia, d.id_caso, d.st_resolucao, t.co_atributo, e.ds_payload
+           FROM mob_divergencia d
+           JOIN mob_caso c ON c.id_caso = d.id_caso
+           JOIN mob_tipo_atributo t ON t.id_tipo_atributo = d.id_tipo_atributo
+           JOIN mob_evento_sincronizacao e ON e.id_evento = d.id_evento
+          WHERE d.id_divergencia = ? AND ${CasoService.VISIVEL_PARA}
+          FOR UPDATE`,
+        [idDivergencia, usuarioId, usuarioId],
+      );
+      const divergencia = linhas[0];
+      // (!) MESMA RESPOSTA PARA "NÃO EXISTE" E "NÃO É SUA", igual a
+      //     `CasoService.porCodigo`: a existência de uma divergência já é
+      //     informação sobre um caso que o profissional pode não ter acesso.
+      if (!divergencia) throw new NotFoundException({ mensagem: 'Divergência não encontrada.' });
+      if (divergencia.st_resolucao !== 'PENDENTE') {
+        throw new ConflictException({ mensagem: 'Esta divergência já foi resolvida.' });
+      }
+
+      if (dados.resolucao === 'DISPOSITIVO') {
+        const bruto = typeof divergencia.ds_payload === 'string'
+          ? JSON.parse(divergencia.ds_payload) as unknown
+          : divergencia.ds_payload;
+        const conteudo = esquemaConteudoAtributo.parse(bruto);
+        await this.captura.registrarAtributo({
+          idCaso: divergencia.id_caso,
+          coAtributo: divergencia.co_atributo,
+          coProcedencia: conteudo.coProcedencia,
+          coValor: conteudo.coValor ?? null,
+          dsValor: conteudo.dsValor ?? null,
+          usuarioId,
+        });
+      }
+
+      await executar(
+        `UPDATE mob_divergencia
+            SET st_resolucao = ?, id_usuario_resolucao = ?, ds_justificativa = ?,
+                st_resolvida = CURRENT_TIMESTAMP(6)
+          WHERE id_divergencia = ?`,
+        [dados.resolucao, usuarioId, dados.justificativa ?? null, idDivergencia],
+      );
+    });
+
+    await this.auditoria.registrar({
+      usuarioId,
+      finalidade: 'ASSISTENCIAL',
+      acao: 'divergencia_resolvida',
+      recurso: 'sincronizacao',
+      detalhe: { idDivergencia, resolucao: dados.resolucao },
+    });
+  }
 
   async aplicarLote(lote: Lote, usuarioId: number): Promise<RespostaLote> {
     const dispositivo = await this.aparelho(lote.coDispositivo);
@@ -275,7 +419,7 @@ export class SincronizacaoService {
         `INSERT INTO mob_evento_sincronizacao
            (id_dispositivo, id_usuario, co_idempotencia, tp_evento, ds_payload,
             st_evento, st_dispositivo, st_envio)
-         VALUES (?, ?, ?, ?, CAST(? AS JSON), 'PENDENTE', ?, CURRENT_TIMESTAMP(6))`,
+         VALUES (?, ?, ?, ?, ?, 'PENDENTE', ?, CURRENT_TIMESTAMP(6))`,
         [
           idDispositivo, usuarioId, evento.coIdempotencia, evento.tipo,
           JSON.stringify(evento.conteudo ?? null),

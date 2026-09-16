@@ -22,7 +22,9 @@
     "db:usuarios": "mysql --defaults-group-suffix=identificasus < db/02_usuarios_por_finalidade.sql",
     "criar-administrador": "node --import tsx scripts/criar-administrador.ts",
     "test:banco": "vitest run --config vitest.banco.config.ts",
-    "db:homologacao": "mysql --defaults-group-suffix=identificasus < db/04_homologacao.sql"
+    "db:homologacao": "mysql --defaults-group-suffix=identificasus < db/04_homologacao.sql",
+    "keycloak-fake": "node --import tsx scripts/keycloak-fake.ts",
+    "semear-ambiente-local": "node --import tsx scripts/semear-ambiente-local.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.4",
