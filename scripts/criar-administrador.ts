@@ -1,6 +1,6 @@
 /**
- * Cria o primeiro usuário do ambiente: no Keycloak, que guarda a credencial, e
- * em `mob_usuario`, que guarda quem a pessoa é. As duas metades, ou nenhuma.
+ * Cria (ou atualiza) um usuário do ambiente em `mob_usuario`: quem a pessoa é,
+ * a finalidade da sessão dela e o hash da senha — tudo na mesma transação.
  *
  * Uso:  npm run criar-administrador
  *
@@ -16,18 +16,20 @@
  *     ASSISTENCIAL, mesmo sendo o administrador do ambiente — ADMINISTRACAO não
  *     abre rota de atendimento, de propósito. O cargo mora em `mob_perfil`, que
  *     aceita mais de um.
+ *
+ * (!) CONTA QUE JÁ EXISTE (mesmo CPF) TEM A SENHA REDEFINIDA, e
+ *     `st_credenciais_alteradas` é carimbada: os tokens emitidos com a senha
+ *     anterior deixam de valer na hora. É também o caminho para dar a primeira
+ *     senha a quem vinha do Keycloak (ver db/06_credencial_local.sql).
  */
 
 import 'dotenv/config';
 import { createConnection } from 'mysql2/promise';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import { perguntar, perguntarOculto } from './_terminal';
-import {
-  acharPorEmail, ambiente, criarUsuario, definirSenha, tokenAdministrativo,
-} from './keycloak-admin';
+import { SENHA_MINIMA, cifrarSenha, motivoDaRecusa } from '../src/acesso/senha';
 
 const FINALIDADES = ['ASSISTENCIAL', 'AUDITORIA', 'PESQUISA', 'ADMINISTRACAO'];
-const SENHA_MINIMA = 10; // igual à política do realm
 
 interface LinhaId extends RowDataPacket { id_usuario: number }
 interface LinhaPerfil extends RowDataPacket { id_perfil: number; co_perfil: string }
@@ -46,15 +48,7 @@ async function principal(): Promise<void> {
     );
   }
 
-  const env = ambiente();
-  if (!env.clientSecret) {
-    throw new Error(
-      'KEYCLOAK_ADMIN_CLIENT_SECRET vazia. O script não cria credencial fora do Keycloak.',
-    );
-  }
-
   console.log('\nIdentificaSUS — criação de usuário');
-  console.log(`Keycloak: ${env.base}/realms/${env.realm}`);
   console.log('Nada é gravado antes da confirmação no fim.\n');
 
   const no_usuario = exigir(await perguntar('Nome completo: '), 'nome');
@@ -87,9 +81,8 @@ async function principal(): Promise<void> {
     if (desconhecido) throw new Error(`Perfil desconhecido: ${desconhecido}`);
 
     const senha = await perguntarOculto(`\nSenha (mínimo ${SENHA_MINIMA}): `);
-    if (senha.length < SENHA_MINIMA) {
-      throw new Error(`A senha precisa de pelo menos ${SENHA_MINIMA} caracteres.`);
-    }
+    const recusa = motivoDaRecusa(senha, ds_email);
+    if (recusa) throw new Error(recusa);
     if (senha !== (await perguntarOculto('Repita a senha: '))) {
       throw new Error('As senhas não conferem.');
     }
@@ -106,37 +99,24 @@ async function principal(): Promise<void> {
       return;
     }
 
-    // ── Keycloak primeiro ───────────────────────────────────────────────────
-    // A ordem importa: sem `sub`, a linha em mob_usuario nasceria órfã e sem
-    // como entrar. Keycloak que falha deixa o banco intocado; banco que falha
-    // deixa uma conta no Keycloak sem cadastro local, que o próprio script
-    // reaproveita na próxima execução.
-    const token = await tokenAdministrativo(env);
-    const existente = await acharPorEmail(env, token, ds_email);
-    const sub = existente
-      ? existente.id
-      : await criarUsuario(env, token, { email: ds_email, nome: no_usuario, finalidade });
+    const hash = await cifrarSenha(senha);
 
-    if (existente) {
-      console.log(`• Keycloak: conta já existia (${sub}); a senha será redefinida.`);
-    } else {
-      console.log(`• Keycloak: conta criada (${sub}).`);
-    }
-    await definirSenha(env, token, sub, senha);
-    console.log('• Keycloak: senha definida.');
-
-    // ── depois o cadastro local ─────────────────────────────────────────────
     await conexao.beginTransaction();
     try {
       await conexao.query<ResultSetHeader>(
-        `INSERT INTO mob_usuario (nu_cpf, no_usuario, ds_email, co_usuario_idp, ds_cargo, st_ativo)
-         VALUES (?, ?, ?, ?, ?, 'A')
+        `INSERT INTO mob_usuario
+           (nu_cpf, no_usuario, ds_email, ds_senha_hash, co_finalidade, ds_cargo, st_ativo)
+         VALUES (?, ?, ?, ?, ?, ?, 'A')
          ON DUPLICATE KEY UPDATE
            no_usuario = VALUES(no_usuario),
            ds_email = VALUES(ds_email),
-           co_usuario_idp = VALUES(co_usuario_idp),
+           ds_senha_hash = VALUES(ds_senha_hash),
+           co_finalidade = VALUES(co_finalidade),
+           st_credenciais_alteradas = CURRENT_TIMESTAMP(6),
+           qt_falhas_login = 0,
+           st_bloqueio_ate = NULL,
            st_ativo = 'A'`,
-        [nu_cpf, no_usuario, ds_email, sub, 'Administrador do ambiente'],
+        [nu_cpf, no_usuario, ds_email, hash, finalidade, 'Administrador do ambiente'],
       );
 
       const [linhas] = await conexao.query<LinhaId[]>(
@@ -156,7 +136,7 @@ async function principal(): Promise<void> {
       }
 
       await conexao.commit();
-      console.log(`• dbsamu: mob_usuario #${idUsuario} e ${escolhidos.length} perfil(is).`);
+      console.log(`• dbsamu: mob_usuario #${idUsuario}, senha definida e ${escolhidos.length} perfil(is).`);
     } catch (erro) {
       await conexao.rollback();
       throw erro;

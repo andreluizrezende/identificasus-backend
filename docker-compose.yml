@@ -11,19 +11,6 @@ services:
       - mysql-dados:/var/lib/mysql
     command: --default-authentication-plugin=caching_sha2_password
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:25.0
-    # --import-realm le tudo que estiver em /opt/keycloak/data/import na
-    # primeira subida. Realm ja existente nao e sobrescrito: para reimportar,
-    # derrube o container e suba de novo (start-dev nao persiste em volume).
-    command: start-dev --import-realm
-    environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: dev
-    volumes:
-      - ./keycloak:/opt/keycloak/data/import:ro
-    ports: ['8080:8080']
-
   rabbitmq:
     image: rabbitmq:3.13-management
     ports: ['5672:5672', '15672:15672']

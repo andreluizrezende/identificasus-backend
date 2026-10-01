@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { compare } from 'bcryptjs';
-import { CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService } from './recuperacao.service';
+import {
+  CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService, TrocaNaoConcluida,
+} from './recuperacao.service';
 import { PEDIDOS_POR_JANELA, RESPOSTA_NEUTRA } from './recuperacao.esquemas';
 import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import type { Correio } from '@/comum/correio';
@@ -19,7 +21,7 @@ vi.mock('bcryptjs', async (importarOriginal) => {
 });
 
 const USUARIO = {
-  id_usuario: 1, no_usuario: 'Ana', ds_email: 'ana@x.br', co_usuario_idp: 'idp-1', st_ativo: 'A',
+  id_usuario: 1, no_usuario: 'Ana', ds_email: 'ana@x.br', st_ativo: 'A',
 };
 
 function montar(opts: {
@@ -43,7 +45,7 @@ function montar(opts: {
 
   const credencial = {
     trocarSenha: vi.fn().mockResolvedValue(
-      opts.trocaOk === false ? { trocada: false, motivo: 'keycloak fora' } : { trocada: true },
+      opts.trocaOk === false ? { trocada: false, motivo: 'banco fora' } : { trocada: true },
     ),
   } as unknown as Credencial;
 
@@ -144,14 +146,14 @@ describe('confirmar', () => {
     expect(credencial.trocarSenha).not.toHaveBeenCalled();
   });
 
-  it('quando a troca de senha falha no keycloak, sai como CanalIndisponivel', async () => {
+  it('quando a gravacao da senha falha, sai como TrocaNaoConcluida', async () => {
     vi.mocked(compare).mockResolvedValue(true as never);
     const { acesso, correio, credencial, auditoria } = montar({
       recuperacaoLinhas: [{ id_recuperacao: 9, co_codigo_hash: 'hash-ok', qt_tentativas: 0 }],
       trocaOk: false,
     });
     const servico = new RecuperacaoService(acesso, correio, credencial, auditoria);
-    await expect(servico.confirmar(dados)).rejects.toBeInstanceOf(CanalIndisponivel);
+    await expect(servico.confirmar(dados)).rejects.toBeInstanceOf(TrocaNaoConcluida);
   });
 
   it('sucesso: queima o codigo, troca a senha e derruba sessoes antigas', async () => {
@@ -163,8 +165,8 @@ describe('confirmar', () => {
     const servico = new RecuperacaoService(acesso, correio, credencial, auditoria);
     const r = await servico.confirmar(dados);
     expect(r.sucesso).toBe(true);
-    expect(credencial.trocarSenha).toHaveBeenCalledWith('idp-1', dados.nova_senha);
-    // queimar (1) + st_credenciais_alteradas (1)
-    expect(executar).toHaveBeenCalledTimes(2);
+    expect(credencial.trocarSenha).toHaveBeenCalledWith(1, 'ana@x.br', dados.nova_senha);
+    // So o queimar: hash e st_credenciais_alteradas saem juntos dentro de Credencial.
+    expect(executar).toHaveBeenCalledTimes(1);
   });
 });

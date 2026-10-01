@@ -24,7 +24,7 @@ export class SessaoController {
   @Post()
   @Publico()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Entrar: valida aparelho, autentica no Keycloak e abre a sessão de 72 h' })
+  @ApiOperation({ summary: 'Entrar: valida aparelho, confere a senha e abre a sessão de 72 h' })
   @UsePipes(new ZodValidacaoPipe(esquemaEntrada))
   async entrar(@Body() dados: Entrada, @Req() req: RequisicaoDoCampo): Promise<SessaoAberta> {
     try {

@@ -19,11 +19,11 @@
     "test:watch": "vitest",
     "db:estrutura": "mysql --defaults-group-suffix=identificasus < db/01_estrutura.sql",
     "db:recuperacao": "mysql --defaults-group-suffix=identificasus < db/03_recuperacao_de_senha.sql",
+    "db:credencial": "mysql --defaults-group-suffix=identificasus < db/06_credencial_local.sql",
     "db:usuarios": "mysql --defaults-group-suffix=identificasus < db/02_usuarios_por_finalidade.sql",
     "criar-administrador": "node --import tsx scripts/criar-administrador.ts",
     "test:banco": "vitest run --config vitest.banco.config.ts",
     "db:homologacao": "mysql --defaults-group-suffix=identificasus < db/04_homologacao.sql",
-    "keycloak-fake": "node --import tsx scripts/keycloak-fake.ts",
     "semear-ambiente-local": "node --import tsx scripts/semear-ambiente-local.ts"
   },
   "dependencies": {

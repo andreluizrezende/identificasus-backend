@@ -27,8 +27,10 @@ GRANT SELECT, INSERT         ON dbsamu.mob_turno_guarnicao TO 'nri_assistencial'
 GRANT SELECT ON dbsamu.mob_usuario          TO 'nri_assistencial'@'%';
 -- (!) UPDATE DE UMA COLUNA SO, e nao da tabela. `st_credenciais_alteradas` e o
 --     que derruba os tokens emitidos antes da troca de senha; sem este grant, a
---     troca acontece no Keycloak e as sessoes abertas continuam validas ate o
---     token expirar — o recurso pela metade, e falhando em silencio.
+--     senha muda e as sessoes abertas continuam validas ate o token expirar —
+--     o recurso pela metade, e falhando em silencio. As demais colunas que a
+--     aplicacao atualiza (hash da senha, freio de tentativas) recebem o grant
+--     em 06_credencial_local.sql, que e onde elas nascem.
 --     O grant por coluna deixa a aplicacao carimbar a data e continua sem
 --     deixa-la mexer em CPF, nome, e-mail ou st_ativo.
 GRANT UPDATE (st_credenciais_alteradas) ON dbsamu.mob_usuario TO 'nri_assistencial'@'%';

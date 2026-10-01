@@ -4,6 +4,7 @@ import { Reflector } from '@nestjs/core';
 import { describe, expect, it, vi } from 'vitest';
 import { AutenticacaoGuard } from './autenticacao.guard';
 import type { BancoPorFinalidade } from './banco-por-finalidade.service';
+import { TokenRecusado } from './token.service';
 import type { Portador, TokenService } from './token.service';
 
 function criarContexto(headers: Record<string, unknown> = {}): {
@@ -19,7 +20,7 @@ function criarContexto(headers: Record<string, unknown> = {}): {
   return { ctx, req };
 }
 
-const PORTADOR: Portador = { sub: 'idp-1', emitidoEm: 1_000, purpose: 'ASSISTENCIAL', ds_email: null };
+const PORTADOR: Portador = { sub: '7', emitidoEm: 1_000, purpose: 'ASSISTENCIAL', ds_email: null };
 
 function montar(opts: {
   publico?: boolean;
@@ -84,7 +85,7 @@ describe('guard de autenticacao', () => {
     const { ctx, req } = criarContexto({ authorization: 'Bearer abc' });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect(req.user).toEqual({
-      sub: 'idp-1', purpose: 'ASSISTENCIAL', usuarioId: 7, noUsuario: 'Ana',
+      sub: '7', purpose: 'ASSISTENCIAL', usuarioId: 7, noUsuario: 'Ana',
     });
   });
 
@@ -109,5 +110,14 @@ describe('guard de autenticacao', () => {
     const { guard } = montar({ publico: false, portador, linhas });
     const { ctx } = criarContexto({ authorization: 'Bearer abc' });
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
+  });
+});
+
+describe('token recusado', () => {
+  it('vira 401, e nao erro do servidor', async () => {
+    const { guard, token } = montar({ publico: false });
+    vi.mocked(token.verificar).mockRejectedValue(new TokenRecusado('token não é de acesso'));
+    const { ctx } = criarContexto({ authorization: 'Bearer token-de-renovacao' });
+    await expect(guard.canActivate(ctx)).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

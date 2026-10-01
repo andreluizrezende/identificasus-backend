@@ -21,7 +21,7 @@ export const esquemaSaida = z.object({
 export type Saida = z.infer<typeof esquemaSaida>;
 
 export interface SessaoAberta {
-  /** Token de acesso do Keycloak. Vale 15 minutos. */
+  /** Token de acesso (JWT assinado pela API). Vale 15 minutos. */
   token: string;
   /** Token de renovação. É ele que sustenta as 72 h fora de linha. */
   renovacao: string;

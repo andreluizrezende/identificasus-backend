@@ -31,7 +31,7 @@ vi.mock('@vercel/blob/client', () => ({
 }));
 
 const UUID = 'a1b2c3d4-e5f6-4789-a012-3456789abcde';
-const PORTADOR: Portador = { sub: 'idp-1', emitidoEm: 1, purpose: 'ASSISTENCIAL', ds_email: null };
+const PORTADOR: Portador = { sub: '7', emitidoEm: 1, purpose: 'ASSISTENCIAL', ds_email: null };
 
 function requisicao(authorization?: string): IncomingMessage {
   return { headers: { authorization } } as unknown as IncomingMessage;

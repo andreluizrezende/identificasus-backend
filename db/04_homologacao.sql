@@ -11,8 +11,8 @@
 --
 -- (!) NENHUM DADO PESSOAL AQUI. Nenhuma linha de mob_usuario, mob_caso ou
 --     mob_caso_atributo. Usuário se cria com `npm run criar-administrador`,
---     que passa pelo Keycloak; caso se cria pelo aplicativo, que é o que
---     este arquivo existe para permitir testar.
+--     que pergunta a senha no terminal; caso se cria pelo aplicativo, que é o
+--     que este arquivo existe para permitir testar.
 --
 -- Idempotente: pode rodar quantas vezes for preciso.
 -- =====================================================================

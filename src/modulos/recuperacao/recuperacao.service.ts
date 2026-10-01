@@ -17,12 +17,13 @@ import type { Confirmacao, Pedido, RespostaRecuperacao } from './recuperacao.esq
 export class CanalIndisponivel extends Error {}
 export class MuitosPedidos extends Error {}
 export class CodigoRecusado extends Error {}
+/** O codigo era bom, mas a gravacao da senha nova falhou. Problema do servidor. */
+export class TrocaNaoConcluida extends Error {}
 
 interface LinhaUsuario extends RowDataPacket {
   id_usuario: number;
   no_usuario: string;
   ds_email: string;
-  co_usuario_idp: string | null;
   st_ativo: string;
 }
 
@@ -36,11 +37,8 @@ interface LinhaRecuperacao extends RowDataPacket {
  * Recuperacao de senha, em dois passos: pedir o codigo e usar o codigo.
  *
  * Referencia: fiocruz-backend/routes/sessao/recuperacao.js. Vieram de la o
- * fluxo, os limites, a resposta neutra e a ordem das escritas. Duas coisas
- * mudaram, e por que:
- *
- * (!) A SENHA NAO E TROCADA AQUI. Ver Credencial: quem guarda credencial neste
- *     projeto e o Keycloak.
+ * fluxo, os limites, a resposta neutra e a ordem das escritas. Uma coisa
+ * mudou, e por que:
  *
  * (!) CODIGO DE 6 DIGITOS, E NAO LINK. Link e a escolha certa para web, onde o
  *     navegador que abre o e-mail e o mesmo que abre o site. Aqui o cliente e
@@ -173,8 +171,11 @@ export class RecuperacaoService {
     //     ainda valido.
     await this.queimar(pedido.id_recuperacao);
 
+    // Hash novo e st_credenciais_alteradas saem na mesma instrucao (ver
+    // Credencial): e o carimbo que derruba as sessoes abertas com a senha velha.
     const troca = await this.credencial.trocarSenha(
-      usuario.co_usuario_idp ?? '',
+      usuario.id_usuario,
+      usuario.ds_email,
       dados.nova_senha,
     );
     if (!troca.trocada) {
@@ -185,16 +186,8 @@ export class RecuperacaoService {
         recurso: `mob_usuario/${usuario.id_usuario}`,
         detalhe: { motivo: troca.motivo },
       });
-      throw new CanalIndisponivel();
+      throw new TrocaNaoConcluida(troca.motivo);
     }
-
-    // (!) st_credenciais_alteradas e o que derruba as sessoes abertas: sem ela,
-    //     quem entrou com a senha velha continuaria dentro ate o token expirar.
-    //     Trocar a senha e nao invalidar o token seria o recurso pela metade,
-    //     justo no caso que ele existe para atender.
-    await this.acesso.executar('ASSISTENCIAL',
-      'UPDATE mob_usuario SET st_credenciais_alteradas = NOW(6) WHERE id_usuario = ?',
-      [usuario.id_usuario]);
 
     await this.auditoria.registrar({
       usuarioId: usuario.id_usuario,
@@ -211,7 +204,7 @@ export class RecuperacaoService {
 
   private async buscarUsuario(dsEmail: string): Promise<LinhaUsuario | null> {
     const linhas = await this.acesso.consultar<LinhaUsuario>('ASSISTENCIAL',
-      `SELECT id_usuario, no_usuario, ds_email, co_usuario_idp, st_ativo
+      `SELECT id_usuario, no_usuario, ds_email, st_ativo
          FROM mob_usuario WHERE ds_email = ? LIMIT 1`,
       [dsEmail]);
     return linhas[0] ?? null;

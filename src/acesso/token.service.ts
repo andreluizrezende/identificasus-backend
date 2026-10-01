@@ -1,10 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { SignJWT, jwtVerify } from 'jose';
 import type { JWTPayload } from 'jose';
 
 /** O que o resto do sistema precisa saber sobre quem está do outro lado. */
 export interface Portador {
-  /** `sub` do Keycloak — é ele que casa com `mob_usuario.co_usuario_idp`. */
+  /** `id_usuario`, em texto — é assim que `sub` viaja num JWT. */
   sub: string;
   /** Emissão do token, em segundos. Comparada com `st_credenciais_alteradas`. */
   emitidoEm: number;
@@ -13,38 +13,93 @@ export interface Portador {
   ds_email: string | null;
 }
 
+/** O que a sessão precisa carimbar no token. */
+export interface Titular {
+  idUsuario: number;
+  finalidade: string | null;
+  dsEmail: string | null;
+  coSessao: string;
+}
+
+export interface TokensEmitidos {
+  acesso: string;
+  renovacao: string;
+  expiraEmSegundos: number;
+}
+
 export class TokenRecusado extends Error {}
+/** Segredo de assinatura ausente ou curto demais. Problema de implantação, não de quem entra. */
+export class AssinaturaIndisponivel extends Error {}
+
+/** Vida curta: token vazado vale pouco, e o guard reconfere a conta a cada requisição. */
+export const SEGUNDOS_DE_ACESSO = 15 * 60;
+/** O limite da sessão fora de linha (RF-11.04). */
+export const SEGUNDOS_DE_RENOVACAO = 72 * 3600;
+
+const EMISSOR = 'identificasus-api';
+const AUDIENCIA = 'identificasus-api';
+const ALGORITMO = 'HS256';
+/** 256 bits: o mínimo que HS256 pede para o segredo não ser o elo fraco. */
+const BYTES_MINIMOS_DO_SEGREDO = 32;
 
 /**
- * Verificação de token contra o JWKS do Keycloak.
+ * Emissão e verificação de token, sem provedor de identidade externo.
  *
- * (!) A CHAVE É BUSCADA DO EMISSOR, NUNCA CONFIGURADA À MÃO. `createRemoteJWKSet`
- *     mantém o cache e troca a chave sozinho quando o Keycloak gira o par. Chave
- *     pública copiada para variável de ambiente é a receita conhecida para o dia
- *     em que a rotação derruba a autenticação inteira sem ninguém entender por quê.
+ * (!) QUEM EMITE É QUEM VERIFICA, e por isso HMAC basta. Par de chaves
+ *     assimétrico só se paga quando um terceiro precisa conferir o token sem
+ *     poder emiti-lo — e não há terceiro: o PWA trata o token como opaco e a
+ *     API é a única a abri-lo.
  *
- * (!) `algorithms` É EXPLÍCITO. Sem essa lista, um token assinado com `none` ou
- *     com HMAC usando a própria chave pública como segredo passa — é a falha mais
- *     antiga de biblioteca de JWT que existe, e ela só não acontece porque a
- *     lista está aqui.
+ * (!) `algorithms` É EXPLÍCITO. Sem essa lista, um token assinado com `none`
+ *     passa — é a falha mais antiga de biblioteca de JWT que existe.
  *
- * (!) A AUDIÊNCIA É CONFERIDA. Sem isso, um token emitido para outro cliente do
- *     mesmo realm entraria nesta API.
+ * (!) `typ` SEPARA ACESSO DE RENOVAÇÃO. Os dois são assinados com o mesmo
+ *     segredo; sem a claim, o token de renovação (72 h) abriria qualquer rota
+ *     como se fosse o de acesso (15 min), e a janela curta deixaria de existir.
+ *
+ * (!) O SEGREDO VEM DE `JWT_SEGREDO` E NUNCA TEM VALOR PADRÃO. Um padrão no
+ *     código é um segredo publicado no repositório.
  */
 @Injectable()
 export class TokenService {
   private readonly log = new Logger('token');
-  private jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
+  async emitir(t: Titular): Promise<TokensEmitidos> {
+    const chave = this.chave();
+    const claims = {
+      purpose: t.finalidade ?? undefined,
+      email: t.dsEmail ?? undefined,
+      sid: t.coSessao,
+    };
+
+    const acesso = await new SignJWT({ ...claims, typ: 'acesso' })
+      .setProtectedHeader({ alg: ALGORITMO })
+      .setSubject(String(t.idUsuario))
+      .setIssuer(EMISSOR)
+      .setAudience(AUDIENCIA)
+      .setIssuedAt()
+      .setExpirationTime(`${SEGUNDOS_DE_ACESSO}s`)
+      .sign(chave);
+
+    const renovacao = await new SignJWT({ sid: t.coSessao, typ: 'renovacao' })
+      .setProtectedHeader({ alg: ALGORITMO })
+      .setSubject(String(t.idUsuario))
+      .setIssuer(EMISSOR)
+      .setAudience(AUDIENCIA)
+      .setIssuedAt()
+      .setExpirationTime(`${SEGUNDOS_DE_RENOVACAO}s`)
+      .sign(chave);
+
+    return { acesso, renovacao, expiraEmSegundos: SEGUNDOS_DE_ACESSO };
+  }
+
+  /** Só aceita token de acesso. Qualquer falha sai como `TokenRecusado`. */
   async verificar(token: string): Promise<Portador> {
-    const emissor = process.env.OIDC_ISSUER;
-    if (!emissor) throw new TokenRecusado('OIDC_ISSUER não configurado');
-
     try {
-      const { payload } = await jwtVerify(token, this.chaves(), {
-        issuer: emissor,
-        audience: process.env.OIDC_AUDIENCE ?? 'identificasus-api',
-        algorithms: ['RS256', 'RS512', 'ES256'],
+      const { payload } = await jwtVerify(token, this.chave(), {
+        issuer: EMISSOR,
+        audience: AUDIENCIA,
+        algorithms: [ALGORITMO],
         clockTolerance: 30,
       });
       return this.doPayload(payload);
@@ -52,23 +107,25 @@ export class TokenService {
       const motivo = erro instanceof Error ? erro.message : 'falha desconhecida';
       // O motivo fica no log do servidor; quem recebeu o 401 vê só o 401.
       this.log.debug(`token recusado: ${motivo}`);
-      throw new TokenRecusado(motivo);
+      throw erro instanceof TokenRecusado ? erro : new TokenRecusado(motivo);
     }
   }
 
-  private chaves(): ReturnType<typeof createRemoteJWKSet> {
-    if (this.jwks) return this.jwks;
-    const uri =
-      process.env.OIDC_JWKS_URI ??
-      `${String(process.env.OIDC_ISSUER)}/protocol/openid-connect/certs`;
-    this.jwks = createRemoteJWKSet(new URL(uri));
-    return this.jwks;
+  private chave(): Uint8Array {
+    const bytes = new TextEncoder().encode(process.env.JWT_SEGREDO ?? '');
+    if (bytes.length < BYTES_MINIMOS_DO_SEGREDO) {
+      throw new AssinaturaIndisponivel(
+        `JWT_SEGREDO ausente ou com menos de ${BYTES_MINIMOS_DO_SEGREDO} bytes`,
+      );
+    }
+    return bytes;
   }
 
   private doPayload(payload: JWTPayload): Portador {
+    if (payload['typ'] !== 'acesso') throw new TokenRecusado('token não é de acesso');
     const sub = payload.sub;
-    if (typeof sub !== 'string' || sub.length === 0) {
-      throw new TokenRecusado('token sem `sub`');
+    if (typeof sub !== 'string' || !/^[1-9]\d*$/.test(sub)) {
+      throw new TokenRecusado('token sem `sub` válido');
     }
     const iat = payload.iat;
     if (typeof iat !== 'number') {

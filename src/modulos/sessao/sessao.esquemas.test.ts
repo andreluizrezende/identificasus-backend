@@ -10,7 +10,7 @@ describe('esquemaEntrada', () => {
     });
     expect(r.ds_email).toBe('ana@exemplo.br');
     expect(r.coDispositivo).toBe('disp-1');
-    // Espaco na senha e literal: cortar mudaria a credencial que o Keycloak recebe.
+    // Espaco na senha e literal: cortar mudaria a credencial conferida contra o hash.
     expect(r.senha).toBe('  segredo123  ');
   });
 

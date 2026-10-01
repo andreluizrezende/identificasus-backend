@@ -3,7 +3,8 @@ import { Reflector } from '@nestjs/core';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from './banco-por-finalidade.service';
 import { CHAVE_PUBLICO } from './publico.decorator';
-import { TokenService } from './token.service';
+import { TokenRecusado, TokenService } from './token.service';
+import type { Portador } from './token.service';
 
 interface RequisicaoAutenticavel {
   headers: Record<string, string | string[] | undefined>;
@@ -25,9 +26,9 @@ interface LinhaUsuario extends RowDataPacket {
  *
  * Faz três coisas, nessa ordem:
  *
- *  1. verifica a assinatura do token contra o JWKS do Keycloak;
- *  2. resolve o `sub` para a linha de `mob_usuario` — token válido de alguém que
- *     não está no cadastro local não entra;
+ *  1. verifica a assinatura do token emitido pela própria API (`TokenService`);
+ *  2. resolve o `sub` (`id_usuario`) para a linha de `mob_usuario` — token de
+ *     quem foi removido ou desativado depois da emissão não entra;
  *  3. compara a emissão do token com `st_credenciais_alteradas`.
  *
  * (!) O PASSO 3 É O QUE FAZ A TROCA DE SENHA VALER ALGUMA COISA. Sem ele, quem
@@ -56,16 +57,16 @@ export class AutenticacaoGuard implements CanActivate {
     if (publico === true) return true;
 
     const req = contexto.switchToHttp().getRequest<RequisicaoAutenticavel>();
-    const portador = await this.token.verificar(this.doCabecalho(req));
+    const portador = await this.portador(this.doCabecalho(req));
 
     const linhas = await this.acesso.consultar<LinhaUsuario>(
       'ASSISTENCIAL',
       `SELECT id_usuario, no_usuario, st_ativo, st_credenciais_alteradas
          FROM mob_usuario
-        WHERE co_usuario_idp = ?
+        WHERE id_usuario = ?
         LIMIT 1`,
-      [portador.sub],
-      );
+      [Number(portador.sub)],
+    );
 
     const usuario = linhas[0];
     if (!usuario || usuario.st_ativo !== 'A') {
@@ -91,6 +92,26 @@ export class AutenticacaoGuard implements CanActivate {
       noUsuario: usuario.no_usuario,
     };
     return true;
+  }
+
+  /**
+   * Token vencido, adulterado ou de renovação é 401, e não 500: sem esta
+   * tradução o `TokenRecusado` escapava para o filtro como erro do servidor, e
+   * o aplicativo não sabia que devia pedir para entrar de novo.
+   */
+  private async portador(token: string): Promise<Portador> {
+    try {
+      return await this.token.verificar(token);
+    } catch (erro) {
+      if (erro instanceof TokenRecusado) {
+        throw new UnauthorizedException({
+          sucesso: false,
+          mensagem: 'Sessão não autorizada',
+          acao: 'Entre novamente',
+        });
+      }
+      throw erro;
+    }
   }
 
   private doCabecalho(req: RequisicaoAutenticavel): string {

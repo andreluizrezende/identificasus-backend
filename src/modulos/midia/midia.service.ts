@@ -98,8 +98,8 @@ export class MidiaService {
 
     const linhas = await this.acesso.consultar<LinhaUsuario>(
       'ASSISTENCIAL',
-      'SELECT id_usuario, st_ativo FROM mob_usuario WHERE co_usuario_idp = ? LIMIT 1',
-      [portador.sub],
+      'SELECT id_usuario, st_ativo FROM mob_usuario WHERE id_usuario = ? LIMIT 1',
+      [Number(portador.sub)],
     );
     const usuario = linhas[0];
     if (!usuario || usuario.st_ativo !== 'A') throw new UnauthorizedException('Sessão não autorizada');

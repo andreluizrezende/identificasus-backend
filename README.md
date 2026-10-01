@@ -8,8 +8,8 @@ cria vínculo sem duas conferências independentes.
 
 ## Stack
 
-NestJS 10 · TypeScript strict · mysql2 + MySQL 8.4 (`dbsamu`) · Zod · jose (OIDC) · RabbitMQ ·
-Keycloak (OIDC) · Vitest · dependency-cruiser
+NestJS 10 · TypeScript strict · mysql2 + MySQL 8.4 (`dbsamu`) · Zod · jose (JWT) · RabbitMQ ·
+Vitest · dependency-cruiser
 
 Definida no documento `IdentificaSUS - arquitetura da solucao.md` (v2.0, ADR-13).
 
@@ -17,8 +17,8 @@ Definida no documento `IdentificaSUS - arquitetura da solucao.md` (v2.0, ADR-13)
 
 ```bash
 npm install
-cp .env.example .env
-docker compose up -d mysql keycloak rabbitmq minio
+cp .env.example .env                     # preencha JWT_SEGREDO (comando no próprio arquivo)
+docker compose up -d mysql rabbitmq minio
 npm run dev                              # http://localhost:3000/api
 ```
 
@@ -40,7 +40,8 @@ Documentação da API em `http://localhost:3000/api/docs` (só fora de produçã
 | `npm run lint:arquitetura` | fronteiras de módulo (dependency-cruiser) |
 | `npm test` | testes de unidade |
 | `npm run test:banco` | testes contra o MySQL de verdade (precisa do `dbsamu`) |
-| `npm run criar-administrador` | cria usuário no Keycloak **e** em `mob_usuario` |
+| `npm run criar-administrador` | cria usuário em `mob_usuario`, com finalidade e senha |
+| `npm run semear-ambiente-local` | usuário de teste com senha conhecida (só desenvolvimento) |
 
 ## Ambiente de ponta a ponta, do zero
 
@@ -48,12 +49,12 @@ Cinco passos. Do primeiro ao último, dá para entrar no aplicativo, abrir turno
 registrar um caso e sincronizar.
 
 ```bash
-# 1. sobe MySQL (que aplica db/*.sql na primeira subida) e Keycloak
-#    (que importa keycloak/realm-identificasus.json)
-docker compose up -d mysql keycloak
+# 1. sobe o MySQL, que aplica db/*.sql na primeira subida
+docker compose up -d mysql
 
-# 2. usuários de banco por finalidade e dados de homologação
+# 2. usuários de banco por finalidade, credencial local e dados de homologação
 npm run db:usuarios
+npm run db:credencial      # só em banco criado antes de db/06 existir
 npm run db:homologacao
 
 # 3. o primeiro usuário. Pergunta tudo no terminal — inclusive a senha.
@@ -71,7 +72,7 @@ pergunta da finalidade. Isso não é um detalhe de configuração:
 
 > **Finalidade não é cargo.** `purpose` é a finalidade do tratamento de dados
 > (ADR-14, LGPD art. 6º) — diz *para que* aqueles dados podem ser lidos naquela
-> sessão, e o token carrega uma só. `ADMINISTRACAO` não abre rota de
+> sessão, e o token carrega uma só. Ela mora em `mob_usuario.co_finalidade`. `ADMINISTRACAO` não abre rota de
 > atendimento, de propósito. Quem vai testar a captura precisa de
 > `ASSISTENCIAL`, mesmo sendo quem administra o ambiente. O cargo mora em
 > `mob_perfil`, que aceita mais de um.
@@ -79,6 +80,27 @@ pergunta da finalidade. Isso não é um detalhe de configuração:
 Na tela de entrar, o **código do aparelho** é um dos que `db/04_homologacao.sql`
 cadastrou — `APAR-HOM-0001`, por exemplo. `APAR-HOM-9999` existe justamente para
 exercitar a recusa.
+
+## Autenticação
+
+A API autentica sozinha, sem provedor de identidade externo. O Keycloak saiu da
+arquitetura em `db/06_credencial_local.sql`.
+
+- **Senha:** hash scrypt em `mob_usuario.ds_senha_hash` (`src/acesso/senha.ts`),
+  com política de no mínimo 10 caracteres e diferente do e-mail. Continua
+  existindo **um** lugar só que guarda credencial.
+- **Token:** JWT HS256 emitido e conferido pela própria API
+  (`src/acesso/token.service.ts`), assinado com `JWT_SEGREDO`. O de acesso vale
+  15 minutos; o de renovação, 72 h, e não abre rota (`typ` diferente).
+- **Freio de tentativas:** a partir da 5ª senha errada seguida, a conta espera
+  60 s a mais por erro, até 15 minutos. Conta inexistente, inativa, bloqueada e
+  senha errada dão o mesmo 401, no mesmo tempo.
+- **Troca de senha** (recuperação ou `criar-administrador`) carimba
+  `st_credenciais_alteradas`, o que derruba os tokens emitidos antes.
+
+Contas que existiam antes da migração ficam sem senha. Para entrar, a pessoa usa
+o "perdi minha senha" ou alguém roda `npm run criar-administrador` com o mesmo
+CPF.
 
 Para o "perdi minha senha" em desenvolvimento, `CORREIO_DRIVER=console` imprime
 o código de 6 dígitos no log do servidor. Esse driver **se recusa a rodar fora de
@@ -90,8 +112,8 @@ outro lugar.
 ```
 src/
 ├── comum/       pipe de validação Zod, filtro de exceção, cadeia de hash
-├── acesso/      finalidade, guard de autenticação, verificação de token,
-│                pool de banco por propósito
+├── acesso/      finalidade, guard de autenticação, emissão e verificação de
+│                token, hash de senha, pool de banco por propósito
 └── modulos/
     ├── sessao/         entrar, sair e a sessão offline de 72 h
     ├── turno/          plantão, guarnição, base, viatura e aparelho
@@ -107,9 +129,8 @@ db/
 ├── 02_usuarios_por_finalidade.sql grants por propósito (ADR-14)
 ├── 03_recuperacao_de_senha.sql    mob_recuperacao
 ├── 04_homologacao.sql             base, viatura e aparelho para testar
-└── 05_cadeia_de_auditoria.sql     sp_mob_ultimo_elo (ver abaixo)
-keycloak/
-└── realm-identificasus.json       realm importado no `docker compose up`
+├── 05_cadeia_de_auditoria.sql     sp_mob_ultimo_elo (ver abaixo)
+└── 06_credencial_local.sql        senha, finalidade e freio em mob_usuario
 test/banco/                        testes contra o MySQL de verdade
 ```
 
@@ -157,9 +178,11 @@ eram *grants* faltando, e um deles falhava em silêncio.
 
 ## Pendências
 
-- Renovação do token (`refresh_token`) ainda não implementada: hoje o acesso
-  vale 15 minutos e a sessão offline de 72 h depende de o aplicativo renovar
-  quando houver rede.
+- Rota de renovação do token ainda não implementada: o token de renovação já é
+  emitido no login, mas hoje o acesso vale 15 minutos e a sessão offline de
+  72 h depende de o aplicativo renovar quando houver rede.
+- Histórico de senhas (o realm do Keycloak recusava as 3 últimas) não foi
+  reimplementado.
 - Outbox transacional e publicação na RNDS.
 - Console da Central de Regulação: comparação, dupla conferência e adjudicação.
 - Ponte pericial: propositalmente ausente. A regra

@@ -2,20 +2,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RowDataPacket } from 'mysql2/promise';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
 import { CodigoRecusado, RecuperacaoService } from '@/modulos/recuperacao/recuperacao.service';
+import { conferirSenha } from '@/acesso/senha';
 import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import type { Correio } from '@/comum/correio';
-import type { Credencial } from '@/modulos/recuperacao/credencial.service';
+import { Credencial } from '@/modulos/recuperacao/credencial.service';
 import { acessoDeTeste, conexao, limparCenario, montarCenario } from './apoio';
 import type { Cenario } from './apoio';
 
 /**
  * A recuperação de senha contra o banco de verdade.
  *
- * (!) O KEYCLOAK É O ÚNICO DUBLÊ AQUI, e por um motivo estreito: ele não roda
- *     nesta máquina. Tudo o mais — código de uso único, teto de tentativas,
- *     `st_credenciais_alteradas` — mora no MySQL e é exercitado nele. O dublê
- *     registra o que recebeu, para que o teste possa afirmar que a senha nova
- *     chegou ao dono da credencial e não a uma coluna do `dbsamu`.
+ * (!) O CORREIO É O ÚNICO DUBLÊ AQUI. Tudo o mais — código de uso único, teto
+ *     de tentativas, hash da senha nova, `st_credenciais_alteradas` — mora no
+ *     MySQL e é exercitado nele, com o usuário de banco assistencial e os
+ *     grants por coluna de verdade.
  */
 class CorreioDeTeste {
   ultimoTexto = '';
@@ -30,19 +30,9 @@ class CorreioDeTeste {
   }
 }
 
-class CredencialDeTeste {
-  chamadas: Array<{ sub: string; senha: string }> = [];
-  configurado(): boolean { return true; }
-  async trocarSenha(sub: string, senha: string): Promise<{ trocada: true }> {
-    this.chamadas.push({ sub, senha });
-    return await Promise.resolve({ trocada: true });
-  }
-}
-
 let acesso: BancoPorFinalidade;
 let cen: Cenario;
 let correio: CorreioDeTeste;
-let credencial: CredencialDeTeste;
 let email: string;
 
 /**
@@ -58,7 +48,7 @@ function novoServico(): RecuperacaoService {
   return new RecuperacaoService(
     acesso,
     correio as unknown as Correio,
-    credencial as unknown as Credencial,
+    new Credencial(acesso),
     new AuditoriaService(acesso),
   );
 }
@@ -68,7 +58,6 @@ beforeAll(async () => {
   email = `a-${cen.sufixo}@teste.local`;
   acesso = acessoDeTeste();
   correio = new CorreioDeTeste();
-  credencial = new CredencialDeTeste();
 });
 
 afterAll(async () => {
@@ -133,7 +122,7 @@ describe('recuperação de senha contra o banco', () => {
     }
   });
 
-  it('o código serve uma vez só, e a troca vai para o Keycloak', async () => {
+  it('o código serve uma vez só, e a senha nova vira hash em mob_usuario', async () => {
     const servico = novoServico();
     await servico.pedirCodigo({ ds_email: email }, '127.0.0.1');
     const codigo = correio.codigo;
@@ -143,16 +132,15 @@ describe('recuperação de senha contra o banco', () => {
     });
     expect(r.sucesso).toBe(true);
 
-    // A senha nova foi para o dono da credencial, e não para uma coluna daqui.
-    expect(credencial.chamadas.at(-1)?.senha).toBe('senha-nova-de-teste');
+    // O que ficou no banco é o hash, e ele confere com a senha nova.
     const c = await conexao();
     try {
-      const [colunas] = await c.query<RowDataPacket[]>(
-        `SELECT COUNT(*) AS n FROM information_schema.columns
-          WHERE table_schema = DATABASE() AND table_name = 'mob_usuario'
-            AND column_name LIKE '%senha%'`,
+      const [linhas] = await c.query<RowDataPacket[]>(
+        'SELECT ds_senha_hash FROM mob_usuario WHERE id_usuario = ?', [cen.idUsuarioA],
       );
-      expect(Number((colunas[0] as { n: number }).n)).toBe(0);
+      const hash = (linhas[0] as { ds_senha_hash: string | null }).ds_senha_hash ?? '';
+      expect(hash).not.toContain('senha-nova-de-teste');
+      expect(await conferirSenha('senha-nova-de-teste', hash)).toBe(true);
     } finally {
       await c.end();
     }

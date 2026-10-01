@@ -2,19 +2,31 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
-import { TokenService } from '@/acesso/token.service';
+import { conferirSenha } from '@/acesso/senha';
+import { AssinaturaIndisponivel, TokenService } from '@/acesso/token.service';
+import type { TokensEmitidos } from '@/acesso/token.service';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
 import type { Entrada, SessaoAberta } from './sessao.esquemas';
 
 /** Aparelho fora de `mob_dispositivo`, inativo ou revogado. */
 export class DispositivoNaoAutorizado extends Error {}
-/** Senha errada, conta inexistente, conta inativa — tudo isto, e só isto. */
+/** Senha errada, conta inexistente, inativa ou bloqueada — tudo isto, e só isto. */
 export class CredencialRecusada extends Error {}
-/** Keycloak fora do ar ou mal configurado. Não é culpa de quem está entrando. */
+/** Assinatura de token sem configuração. Não é culpa de quem está entrando. */
 export class AutenticacaoIndisponivel extends Error {}
 
 /** 72 horas: o limite da sessão fora de linha (RF-11.04). */
 const HORAS_DE_SESSAO = 72;
+
+/**
+ * Freio de tentativas por conta: a partir da quinta senha errada seguida, a
+ * conta espera 60 s a mais a cada erro, até o teto de 15 minutos. Não é bloqueio permanente de propósito — trancar a conta
+ * de vez daria a qualquer um o poder de tirar um socorrista do plantão
+ * digitando o e-mail dele com a senha errada cinco vezes.
+ */
+export const FALHAS_ANTES_DO_BLOQUEIO = 5;
+const SEGUNDOS_POR_FALHA = 60;
+const SEGUNDOS_MAXIMOS_DE_BLOQUEIO = 900;
 
 interface LinhaDispositivo extends RowDataPacket {
   id_dispositivo: number;
@@ -28,6 +40,11 @@ interface LinhaUsuario extends RowDataPacket {
   no_usuario: string;
   ds_email: string | null;
   st_ativo: string;
+  ds_senha_hash: string | null;
+  co_finalidade: string | null;
+  qt_falhas_login: number;
+  /** 1 quando `st_bloqueio_ate` ainda está no futuro, pelo relógio do banco. */
+  lg_bloqueado: number;
 }
 
 interface LinhaPerfil extends RowDataPacket {
@@ -37,15 +54,18 @@ interface LinhaPerfil extends RowDataPacket {
 /**
  * Entrada e saída do aplicativo de campo.
  *
- * (!) A SENHA PASSA POR AQUI E NÃO PARA AQUI. É a consequência assumida da
- *     concessão direta (ver keycloak/LEIA-ME.md): ela é encaminhada ao Keycloak
- *     na mesma requisição e descartada. Não é gravada, não entra em log, não vai
- *     para a trilha de auditoria e `mob_usuario` continua sem coluna de senha.
+ * (!) A SENHA EM CLARO NÃO SAI DESTA REQUISIÇÃO. É conferida contra o hash de
+ *     `mob_usuario.ds_senha_hash` (ver `acesso/senha.ts`) e descartada: não é
+ *     gravada, não entra em log e não vai para a trilha de auditoria.
  *
- * (!) O APARELHO É CONFERIDO ANTES DA SENHA, e essa ordem é o motivo de a rota
- *     existir em vez de o aplicativo falar direto com o Keycloak. Aparelho não
- *     autorizado é recusado sem que a credencial chegue a sair do backend — e,
- *     principalmente, sem que ele fique com um token válido na mão.
+ * (!) O APARELHO É CONFERIDO ANTES DA SENHA. Aparelho não autorizado é recusado
+ *     sem que a credencial chegue a ser avaliada — e, principalmente, sem que
+ *     ele fique com um token válido na mão.
+ *
+ * (!) CONTA INEXISTENTE, INATIVA, BLOQUEADA E SENHA ERRADA SAEM IGUAIS, e no
+ *     mesmo tempo: o hash é calculado em todos os casos (`conferirSenha` usa um
+ *     engodo quando não há hash). Quem tenta descobrir contas não aprende nada
+ *     com a resposta nem com o cronômetro.
  */
 @Injectable()
 export class SessaoService {
@@ -60,17 +80,22 @@ export class SessaoService {
   async entrar(dados: Entrada, origem: string): Promise<SessaoAberta> {
     const dispositivo = await this.aparelhoAutorizado(dados.coDispositivo);
 
-    const concessao = await this.concessaoDireta(dados.ds_email, dados.senha);
-    const portador = await this.token.verificar(concessao.access_token);
+    const usuario = await this.usuarioPorEmail(dados.ds_email);
+    // Sempre calcula o hash, mesmo sem conta: ver o terceiro (!) acima.
+    const senhaConfere = await conferirSenha(dados.senha, usuario?.ds_senha_hash ?? null);
 
-    const usuario = await this.usuarioDo(portador.sub);
-    if (!usuario) {
-      // Credencial boa no Keycloak, pessoa ausente do cadastro local. Sai como
-      // recusa, e não como erro: quem tenta descobrir contas não aprende com
-      // isto qual das duas metades faltou.
-      this.log.warn(`sub ${portador.sub} autenticou sem linha em mob_usuario`);
+    if (!usuario) throw new CredencialRecusada();
+    if (Number(usuario.lg_bloqueado) === 1) {
+      // Bloqueado não conta nova falha: senão o teto de 15 min viraria
+      // permanente para quem continuasse tentando — inclusive o dono da conta.
       throw new CredencialRecusada();
     }
+    if (!senhaConfere) {
+      await this.registrarFalha(usuario.id_usuario);
+      throw new CredencialRecusada();
+    }
+    if (usuario.st_ativo !== 'A') throw new CredencialRecusada();
+    if (usuario.qt_falhas_login > 0) await this.zerarFalhas(usuario.id_usuario);
 
     const perfis = await this.acesso.consultar<LinhaPerfil>(
       'ASSISTENCIAL',
@@ -83,6 +108,7 @@ export class SessaoService {
 
     const coSessao = randomUUID();
     const expiraEm = new Date(Date.now() + HORAS_DE_SESSAO * 3600 * 1000);
+    const tokens = await this.emitir(usuario, coSessao);
 
     await this.acesso.executar(
       'ASSISTENCIAL',
@@ -101,9 +127,9 @@ export class SessaoService {
     });
 
     return {
-      token: concessao.access_token,
-      renovacao: concessao.refresh_token,
-      expiraEmSegundos: concessao.expires_in,
+      token: tokens.acesso,
+      renovacao: tokens.renovacao,
+      expiraEmSegundos: tokens.expiraEmSegundos,
       coSessao,
       st_expiracao: expiraEm.toISOString(),
       usuario: {
@@ -121,8 +147,8 @@ export class SessaoService {
   }
 
   /**
-   * Encerra a sessão local. Não derruba o token do Keycloak — quem faz isso é o
-   * aplicativo, apagando o que guardou. O que esta linha registra é o instante
+   * Encerra a sessão local. Não revoga o token de acesso, que morre sozinho em
+   * 15 minutos — quem o descarta é o aplicativo, apagando o que guardou. O que esta linha registra é o instante
    * em que o aparelho declarou ter saído, que é o que a trilha precisa saber.
    */
   async sair(usuarioId: number, coSessao: string, motivo?: string): Promise<void> {
@@ -186,65 +212,66 @@ export class SessaoService {
     return dispositivo;
   }
 
-  private async usuarioDo(sub: string): Promise<LinhaUsuario | null> {
+  private async usuarioPorEmail(dsEmail: string): Promise<LinhaUsuario | null> {
     const linhas = await this.acesso.consultar<LinhaUsuario>(
       'ASSISTENCIAL',
-      `SELECT id_usuario, no_usuario, ds_email, st_ativo
-         FROM mob_usuario WHERE co_usuario_idp = ? LIMIT 1`,
-      [sub],
+      `SELECT id_usuario, no_usuario, ds_email, st_ativo, ds_senha_hash, co_finalidade,
+              qt_falhas_login,
+              (st_bloqueio_ate IS NOT NULL AND st_bloqueio_ate > NOW(6)) AS lg_bloqueado
+         FROM mob_usuario WHERE ds_email = ? LIMIT 1`,
+      [dsEmail],
     );
-    const usuario = linhas[0];
-    return usuario && usuario.st_ativo === 'A' ? usuario : null;
+    return linhas[0] ?? null;
   }
 
-  private async concessaoDireta(
-    email: string,
-    senha: string,
-  ): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
-    const emissor = process.env.OIDC_ISSUER;
-    if (!emissor) throw new AutenticacaoIndisponivel('OIDC_ISSUER não configurado');
+  /**
+   * Uma instrução só, para que duas tentativas simultâneas não se percam uma na
+   * outra. No UPDATE de tabela única o MySQL avalia as atribuições da esquerda
+   * para a direita: `st_bloqueio_ate` já enxerga o contador incrementado.
+   */
+  private async registrarFalha(idUsuario: number): Promise<void> {
+    await this.acesso.executar(
+      'ASSISTENCIAL',
+      `UPDATE mob_usuario
+          SET qt_falhas_login = LEAST(qt_falhas_login + 1, 255),
+              st_bloqueio_ate = IF(
+                qt_falhas_login >= ?,
+                DATE_ADD(NOW(6), INTERVAL LEAST(? * (qt_falhas_login - ? + 1), ?) SECOND),
+                st_bloqueio_ate)
+        WHERE id_usuario = ?`,
+      [
+        FALHAS_ANTES_DO_BLOQUEIO,
+        SEGUNDOS_POR_FALHA,
+        FALHAS_ANTES_DO_BLOQUEIO,
+        SEGUNDOS_MAXIMOS_DE_BLOQUEIO,
+        idUsuario,
+      ],
+    );
+  }
 
-    let resposta: Response;
+  private async zerarFalhas(idUsuario: number): Promise<void> {
+    await this.acesso.executar(
+      'ASSISTENCIAL',
+      'UPDATE mob_usuario SET qt_falhas_login = 0, st_bloqueio_ate = NULL WHERE id_usuario = ?',
+      [idUsuario],
+    );
+  }
+
+  private async emitir(usuario: LinhaUsuario, coSessao: string): Promise<TokensEmitidos> {
     try {
-      resposta = await fetch(`${emissor}/protocol/openid-connect/token`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'password',
-          client_id: process.env.OIDC_CLIENT_ID ?? 'identificasus-app',
-          scope: 'openid',
-          username: email,
-          password: senha,
-        }),
+      return await this.token.emitir({
+        idUsuario: usuario.id_usuario,
+        finalidade: usuario.co_finalidade,
+        dsEmail: usuario.ds_email,
+        coSessao,
       });
     } catch (erro) {
-      const motivo = erro instanceof Error ? erro.message : 'falha desconhecida';
-      throw new AutenticacaoIndisponivel(motivo);
+      if (erro instanceof AssinaturaIndisponivel) {
+        this.log.error(erro.message);
+        throw new AutenticacaoIndisponivel(erro.message);
+      }
+      throw erro;
     }
-
-    // 400 e 401 são "credencial não serve" — inclusive a conta bloqueada pelo
-    // freio de tentativas do próprio Keycloak. Qualquer outro código é problema
-    // do servidor, e dizer "senha errada" nesse caso manda a pessoa procurar
-    // erro onde não há.
-    if (resposta.status === 400 || resposta.status === 401) throw new CredencialRecusada();
-    if (!resposta.ok) throw new AutenticacaoIndisponivel(`keycloak respondeu ${resposta.status}`);
-
-    const dados: unknown = await resposta.json();
-    if (typeof dados !== 'object' || dados === null) {
-      throw new AutenticacaoIndisponivel('keycloak devolveu resposta ilegível');
-    }
-    const mapa = dados as Record<string, unknown>;
-    const acesso = mapa['access_token'];
-    const renovacao = mapa['refresh_token'];
-    const validade = mapa['expires_in'];
-    if (typeof acesso !== 'string' || typeof renovacao !== 'string') {
-      throw new AutenticacaoIndisponivel('keycloak devolveu concessão sem token');
-    }
-    return {
-      access_token: acesso,
-      refresh_token: renovacao,
-      expires_in: typeof validade === 'number' ? validade : 900,
-    };
   }
 }
 

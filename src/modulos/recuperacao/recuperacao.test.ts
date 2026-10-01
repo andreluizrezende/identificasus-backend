@@ -110,9 +110,20 @@ describe('validacao de entrada', () => {
     expect(esquemaConfirmacao.safeParse({ ...base, co_codigo: '123456' }).success).toBe(true);
   });
 
-  it('recusa senha com menos de oito caracteres', () => {
+  it('recusa senha com menos de dez caracteres', () => {
     const r = esquemaConfirmacao.safeParse({
-      ds_email: 'a@x.br', co_codigo: '123456', nova_senha: 'curta1',
+      ds_email: 'a@x.br', co_codigo: '123456', nova_senha: 'curta12345',
+    });
+    expect(r.success).toBe(true);
+    const curta = esquemaConfirmacao.safeParse({
+      ds_email: 'a@x.br', co_codigo: '123456', nova_senha: 'curta1234',
+    });
+    expect(curta.success).toBe(false);
+  });
+
+  it('recusa senha igual ao e-mail, antes de o codigo ser conferido', () => {
+    const r = esquemaConfirmacao.safeParse({
+      ds_email: 'ana.silva@exemplo.br', co_codigo: '123456', nova_senha: 'Ana.Silva@Exemplo.br',
     });
     expect(r.success).toBe(false);
   });

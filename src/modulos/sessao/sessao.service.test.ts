@@ -2,26 +2,38 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado, SessaoService,
 } from './sessao.service';
+import { conferirSenha } from '@/acesso/senha';
+import { AssinaturaIndisponivel } from '@/acesso/token.service';
 import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import type { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
-import type { Portador, TokenService } from '@/acesso/token.service';
+import type { TokenService } from '@/acesso/token.service';
 
-const ENV = { ...process.env };
+/**
+ * `conferirSenha` é mockado: o scrypt de verdade custa centenas de
+ * milissegundos e já tem teste próprio em `acesso/senha.test.ts`. Aqui o que
+ * importa é o que o serviço faz com o "confere" e o "não confere".
+ */
+vi.mock('@/acesso/senha', () => ({ conferirSenha: vi.fn() }));
+
 afterEach(() => {
-  process.env = { ...ENV };
-  vi.unstubAllGlobals();
+  vi.mocked(conferirSenha).mockReset();
 });
 
 const DISPOSITIVO = { id_dispositivo: 1, co_dispositivo: 'D1', id_base: 2, no_base: 'Base 1' };
-const USUARIO = { id_usuario: 5, no_usuario: 'Ana', ds_email: 'ana@x.br', st_ativo: 'A' };
-const PORTADOR: Portador = { sub: 'sub-1', emitidoEm: 100, purpose: 'ASSISTENCIAL', ds_email: 'ana@x.br' };
+const USUARIO = {
+  id_usuario: 5, no_usuario: 'Ana', ds_email: 'ana@x.br', st_ativo: 'A',
+  ds_senha_hash: 'scrypt$hash', co_finalidade: 'ASSISTENCIAL', qt_falhas_login: 0, lg_bloqueado: 0,
+};
+const ENTRADA = { ds_email: 'ana@x.br', senha: 'CampoSamu2027!Ba', coDispositivo: 'D1' };
 
 function montar(opts: {
   dispositivoLinhas?: unknown[];
   usuarioLinhas?: unknown[];
   perfilLinhas?: unknown[];
-  portador?: Portador;
+  senhaConfere?: boolean;
+  emitir?: () => Promise<unknown>;
 }) {
+  vi.mocked(conferirSenha).mockResolvedValue(opts.senhaConfere ?? true);
   const consultar = vi.fn()
     .mockImplementation(async (_fin: string, sql: string) => {
       if (sql.includes('FROM mob_dispositivo')) return opts.dispositivoLinhas ?? [DISPOSITIVO];
@@ -31,99 +43,80 @@ function montar(opts: {
     });
   const executar = vi.fn().mockResolvedValue({ affectedRows: 1 });
   const acesso = { consultar, executar } as unknown as BancoPorFinalidade;
-  const token = { verificar: vi.fn().mockResolvedValue(opts.portador ?? PORTADOR) } as unknown as TokenService;
+  const emitir = vi.fn(opts.emitir ?? (async () => ({
+    acesso: 'tok', renovacao: 'ref', expiraEmSegundos: 900,
+  })));
+  const token = { emitir } as unknown as TokenService;
   const auditoria = { registrar: vi.fn().mockResolvedValue('hash') } as unknown as AuditoriaService;
-  return { acesso, token, auditoria, consultar, executar };
+  const servico = new SessaoService(acesso, token, auditoria);
+  return { servico, auditoria, consultar, executar, emitir };
 }
 
-function fetchQue(respostas: Array<{ status: number; corpo: unknown }>) {
-  let i = 0;
-  vi.stubGlobal('fetch', vi.fn(async () => {
-    const r = respostas[Math.min(i, respostas.length - 1)] as { status: number; corpo: unknown };
-    i += 1;
-    return {
-      ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.corpo,
-    } as Response;
-  }));
+function sqls(executar: ReturnType<typeof vi.fn>): string[] {
+  return executar.mock.calls.map((c) => String(c[1]));
 }
 
 describe('entrar', () => {
   it('recusa aparelho nao autorizado ANTES de checar a senha', async () => {
-    process.env.OIDC_ISSUER = 'https://kc.local';
-    const chamouFetch = vi.fn();
-    vi.stubGlobal('fetch', chamouFetch);
-    const { acesso, token, auditoria } = montar({ dispositivoLinhas: [] });
-
-    await expect(
-      new SessaoService(acesso, token, auditoria).entrar(
-        { ds_email: 'ana@x.br', senha: 'x', coDispositivo: 'D1' }, '1.2.3.4',
-      ),
-    ).rejects.toBeInstanceOf(DispositivoNaoAutorizado);
-    expect(chamouFetch).not.toHaveBeenCalled();
+    const { servico } = montar({ dispositivoLinhas: [] });
+    await expect(servico.entrar(ENTRADA, '1.2.3.4')).rejects.toBeInstanceOf(DispositivoNaoAutorizado);
+    expect(conferirSenha).not.toHaveBeenCalled();
   });
 
-  it('senha ou e-mail errados (400/401 do keycloak) viram CredencialRecusada', async () => {
-    process.env.OIDC_ISSUER = 'https://kc.local';
-    fetchQue([{ status: 401, corpo: {} }]);
-    const { acesso, token, auditoria } = montar({});
-
-    await expect(
-      new SessaoService(acesso, token, auditoria).entrar(
-        { ds_email: 'ana@x.br', senha: 'errada', coDispositivo: 'D1' }, '1.2.3.4',
-      ),
-    ).rejects.toBeInstanceOf(CredencialRecusada);
+  it('senha errada vira CredencialRecusada e conta uma falha', async () => {
+    const { servico, executar, emitir } = montar({ senhaConfere: false });
+    await expect(servico.entrar(ENTRADA, '1.2.3.4')).rejects.toBeInstanceOf(CredencialRecusada);
+    expect(sqls(executar)).toEqual([expect.stringMatching(/qt_falhas_login = LEAST/)]);
+    expect(emitir).not.toHaveBeenCalled();
   });
 
-  it('keycloak fora do ar (5xx) vira AutenticacaoIndisponivel, nao CredencialRecusada', async () => {
-    process.env.OIDC_ISSUER = 'https://kc.local';
-    fetchQue([{ status: 503, corpo: {} }]);
-    const { acesso, token, auditoria } = montar({});
-
-    await expect(
-      new SessaoService(acesso, token, auditoria).entrar(
-        { ds_email: 'ana@x.br', senha: 'x', coDispositivo: 'D1' }, '1.2.3.4',
-      ),
-    ).rejects.toBeInstanceOf(AutenticacaoIndisponivel);
+  it('e-mail desconhecido: mesma recusa, e o hash e calculado mesmo assim', async () => {
+    const { servico, executar } = montar({ usuarioLinhas: [], senhaConfere: false });
+    await expect(servico.entrar(ENTRADA, '1.2.3.4')).rejects.toBeInstanceOf(CredencialRecusada);
+    // Sem isto, o tempo de resposta separaria conta inexistente de senha errada.
+    expect(conferirSenha).toHaveBeenCalledWith(ENTRADA.senha, null);
+    expect(executar).not.toHaveBeenCalled();
   });
 
-  it('falha de rede ao falar com o keycloak vira AutenticacaoIndisponivel', async () => {
-    process.env.OIDC_ISSUER = 'https://kc.local';
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNRESET')));
-    const { acesso, token, auditoria } = montar({});
-
-    await expect(
-      new SessaoService(acesso, token, auditoria).entrar(
-        { ds_email: 'ana@x.br', senha: 'x', coDispositivo: 'D1' }, '1.2.3.4',
-      ),
-    ).rejects.toBeInstanceOf(AutenticacaoIndisponivel);
+  it('conta bloqueada recusa ate a senha certa, sem contar falha nova', async () => {
+    const { servico, executar } = montar({
+      usuarioLinhas: [{ ...USUARIO, lg_bloqueado: 1 }], senhaConfere: true,
+    });
+    await expect(servico.entrar(ENTRADA, '1.2.3.4')).rejects.toBeInstanceOf(CredencialRecusada);
+    expect(executar).not.toHaveBeenCalled();
   });
 
-  it('credencial boa no keycloak mas sem linha local: recusa como CredencialRecusada', async () => {
-    process.env.OIDC_ISSUER = 'https://kc.local';
-    fetchQue([{ status: 200, corpo: { access_token: 't', refresh_token: 'r', expires_in: 900 } }]);
-    const { acesso, token, auditoria } = montar({ usuarioLinhas: [] });
+  it('conta inativa recusa com a mesma resposta da senha errada', async () => {
+    const { servico } = montar({ usuarioLinhas: [{ ...USUARIO, st_ativo: 'I' }] });
+    await expect(servico.entrar(ENTRADA, '1.2.3.4')).rejects.toBeInstanceOf(CredencialRecusada);
+  });
 
-    await expect(
-      new SessaoService(acesso, token, auditoria).entrar(
-        { ds_email: 'ana@x.br', senha: 'x', coDispositivo: 'D1' }, '1.2.3.4',
-      ),
-    ).rejects.toBeInstanceOf(CredencialRecusada);
+  it('sem JWT_SEGREDO vira AutenticacaoIndisponivel, e nenhuma sessao e gravada', async () => {
+    const { servico, executar } = montar({
+      emitir: async () => { throw new AssinaturaIndisponivel('sem segredo'); },
+    });
+    await expect(servico.entrar(ENTRADA, '1.2.3.4')).rejects.toBeInstanceOf(AutenticacaoIndisponivel);
+    expect(sqls(executar).some((s) => s.includes('mob_sessao'))).toBe(false);
+  });
+
+  it('acerto depois de erros zera o contador de falhas', async () => {
+    const { servico, executar } = montar({ usuarioLinhas: [{ ...USUARIO, qt_falhas_login: 3 }] });
+    await servico.entrar(ENTRADA, '1.2.3.4');
+    expect(sqls(executar)[0]).toMatch(/qt_falhas_login = 0/);
   });
 
   it('abre a sessao e devolve o pacote completo quando tudo bate', async () => {
-    process.env.OIDC_ISSUER = 'https://kc.local';
-    fetchQue([{ status: 200, corpo: { access_token: 'tok', refresh_token: 'ref', expires_in: 900 } }]);
-    const { acesso, token, auditoria, executar } = montar({});
-
-    const r = await new SessaoService(acesso, token, auditoria).entrar(
-      { ds_email: 'ana@x.br', senha: 'x', coDispositivo: 'D1' }, '1.2.3.4',
-    );
+    const { servico, auditoria, executar, emitir } = montar({});
+    const r = await servico.entrar(ENTRADA, '1.2.3.4');
 
     expect(r.token).toBe('tok');
     expect(r.renovacao).toBe('ref');
     expect(r.expiraEmSegundos).toBe(900);
     expect(r.usuario).toEqual({ id: 5, no_usuario: 'Ana', ds_email: 'ana@x.br', perfis: ['CAMPO'] });
     expect(r.dispositivo).toEqual({ co_dispositivo: 'D1', id_base: 2, no_base: 'Base 1' });
+    expect(emitir).toHaveBeenCalledWith({
+      idUsuario: 5, finalidade: 'ASSISTENCIAL', dsEmail: 'ana@x.br', coSessao: r.coSessao,
+    });
     expect(executar).toHaveBeenCalledTimes(1); // grava a sessao
     expect(auditoria.registrar).toHaveBeenCalledTimes(1);
   });
@@ -131,16 +124,16 @@ describe('entrar', () => {
 
 describe('sair', () => {
   it('so audita quando alguma sessao foi de fato encerrada', async () => {
-    const { acesso, token, auditoria } = montar({});
-    (acesso.executar as ReturnType<typeof vi.fn>).mockResolvedValue({ affectedRows: 0 });
-    await new SessaoService(acesso, token, auditoria).sair(5, 'sessao-x');
+    const { servico, auditoria, executar } = montar({});
+    executar.mockResolvedValue({ affectedRows: 0 });
+    await servico.sair(5, 'sessao-x');
     expect(auditoria.registrar).not.toHaveBeenCalled();
   });
 
   it('audita quando a sessao existia e foi encerrada', async () => {
-    const { acesso, token, auditoria } = montar({});
-    (acesso.executar as ReturnType<typeof vi.fn>).mockResolvedValue({ affectedRows: 1 });
-    await new SessaoService(acesso, token, auditoria).sair(5, 'sessao-x');
+    const { servico, auditoria, executar } = montar({});
+    executar.mockResolvedValue({ affectedRows: 1 });
+    await servico.sair(5, 'sessao-x');
     expect(auditoria.registrar).toHaveBeenCalledTimes(1);
   });
 });

@@ -5,7 +5,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Publico } from '@/acesso/publico.decorator';
 import { ZodValidacaoPipe } from '@/comum/zod-validacao.pipe';
 import {
-  CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService,
+  CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService, TrocaNaoConcluida,
 } from './recuperacao.service';
 import { esquemaConfirmacao, esquemaPedido } from './recuperacao.esquemas';
 import type { Confirmacao, Pedido, RespostaRecuperacao } from './recuperacao.esquemas';
@@ -85,6 +85,18 @@ export class RecuperacaoController {
           acao: 'Peca um codigo novo e use o que chegar por ultimo',
         },
         HttpStatus.UNAUTHORIZED,
+      );
+    }
+    if (erro instanceof TrocaNaoConcluida) {
+      // O codigo ja foi queimado (ver a ordem em RecuperacaoService): a pessoa
+      // precisa saber que tem de pedir outro, e nao so tentar de novo.
+      return new HttpException(
+        {
+          sucesso: false,
+          mensagem: 'Nao foi possivel gravar a senha nova',
+          acao: 'Peca um codigo novo; se persistir, avise o plantao de TI',
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
     return new HttpException(

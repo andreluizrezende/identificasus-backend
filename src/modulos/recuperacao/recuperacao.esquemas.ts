@@ -1,7 +1,7 @@
 import { z } from 'zod';
+import { SENHA_MAXIMA, SENHA_MINIMA, motivoDaRecusa } from '@/acesso/senha';
 
-/** O servidor exige 8; a tela exige o mesmo para nao gastar uma ida ate aqui. */
-export const SENHA_MINIMA = 8;
+export { SENHA_MINIMA };
 export const DIGITOS_DO_CODIGO = 6;
 export const MINUTOS_DE_VALIDADE = 15;
 
@@ -24,11 +24,21 @@ const email = z.string().trim().toLowerCase().email().max(180);
 export const esquemaPedido = z.object({ ds_email: email });
 export type Pedido = z.infer<typeof esquemaPedido>;
 
-export const esquemaConfirmacao = z.object({
-  ds_email: email,
-  co_codigo: z.string().trim().regex(/^\d{6}$/),
-  nova_senha: z.string().min(SENHA_MINIMA).max(200),
-});
+/**
+ * A politica inteira mora em `acesso/senha.ts`; aqui ela so e aplicada antes de
+ * o codigo ser conferido. Senha fraca recusada DEPOIS de queimar o codigo
+ * obrigaria a pessoa a pedir outro e-mail por um erro de digitacao.
+ */
+export const esquemaConfirmacao = z
+  .object({
+    ds_email: email,
+    co_codigo: z.string().trim().regex(/^\d{6}$/),
+    nova_senha: z.string().min(SENHA_MINIMA).max(SENHA_MAXIMA),
+  })
+  .superRefine((d, ctx) => {
+    const motivo = motivoDaRecusa(d.nova_senha, d.ds_email);
+    if (motivo) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['nova_senha'], message: motivo });
+  });
 export type Confirmacao = z.infer<typeof esquemaConfirmacao>;
 
 export interface RespostaRecuperacao {

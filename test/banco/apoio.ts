@@ -92,14 +92,14 @@ export async function montarCenario(rotulo: string): Promise<Cenario> {
       [idBase, `D-${sufixo}`],
     );
     const [a] = await c.query(
-      `INSERT INTO mob_usuario (nu_cpf, no_usuario, ds_email, co_usuario_idp, st_ativo)
-       VALUES (?, ?, ?, ?, 'A')`,
-      [cpfDeTeste(), `Profissional A ${sufixo}`, `a-${sufixo}@teste.local`, `idp-a-${sufixo}`],
+      `INSERT INTO mob_usuario (nu_cpf, no_usuario, ds_email, co_finalidade, st_ativo)
+       VALUES (?, ?, ?, 'ASSISTENCIAL', 'A')`,
+      [cpfDeTeste(), `Profissional A ${sufixo}`, `a-${sufixo}@teste.local`],
     );
     const [b] = await c.query(
-      `INSERT INTO mob_usuario (nu_cpf, no_usuario, ds_email, co_usuario_idp, st_ativo)
-       VALUES (?, ?, ?, ?, 'A')`,
-      [cpfDeTeste(), `Profissional B ${sufixo}`, `b-${sufixo}@teste.local`, `idp-b-${sufixo}`],
+      `INSERT INTO mob_usuario (nu_cpf, no_usuario, ds_email, co_finalidade, st_ativo)
+       VALUES (?, ?, ?, 'ASSISTENCIAL', 'A')`,
+      [cpfDeTeste(), `Profissional B ${sufixo}`, `b-${sufixo}@teste.local`],
     );
 
     return {

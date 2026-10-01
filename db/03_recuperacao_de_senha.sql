@@ -5,6 +5,11 @@
 -- O fluxo, os limites e a disciplina de nao revelar quais contas existem vem
 -- de la. O que muda aqui esta anotado abaixo.
 --
+-- (!) SUPERADO EM PARTE POR 06_credencial_local.sql: o Keycloak saiu da
+--     arquitetura, a senha passou a morar em mob_usuario.ds_senha_hash e
+--     co_usuario_idp foi removida. As notas sobre o Keycloak abaixo ficam como
+--     registro da decisao anterior.
+--
 -- (!) TABELA PROPRIA, E NAO COLUNAS EM mob_usuario. Guardar o codigo na linha
 --     do usuario parece mais simples e custa caro: perde-se o historico de
 --     pedidos, que e o que denuncia um ataque em andamento, e cada pedido novo

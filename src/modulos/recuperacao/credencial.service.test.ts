@@ -1,89 +1,47 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { conferirSenha } from '@/acesso/senha';
 import { Credencial } from './credencial.service';
+import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 
-const ENV = { ...process.env };
-const CONFIGURADO = {
-  OIDC_ISSUER: 'https://kc.local/realms/identificasus',
-  KEYCLOAK_ADMIN_CLIENT_ID: 'admin-cli',
-  KEYCLOAK_ADMIN_CLIENT_SECRET: 'segredo',
-};
-
-afterEach(() => {
-  process.env = { ...ENV };
-  vi.unstubAllGlobals();
-});
-
-function comFetch(impl: (url: string, init?: RequestInit) => Promise<Response>) {
-  vi.stubGlobal('fetch', vi.fn(impl));
+function montar(executar = vi.fn().mockResolvedValue({ affectedRows: 1 })) {
+  const acesso = { executar } as unknown as BancoPorFinalidade;
+  return { credencial: new Credencial(acesso), executar };
 }
-
-function resposta(status: number, corpo: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: async () => corpo,
-  } as Response;
-}
-
-describe('configurado', () => {
-  it('exige emissor e credencial administrativa completos', () => {
-    process.env = { ...ENV };
-    expect(new Credencial().configurado()).toBe(false);
-    Object.assign(process.env, CONFIGURADO);
-    expect(new Credencial().configurado()).toBe(true);
-  });
-});
 
 describe('trocarSenha', () => {
-  it('recusa sem credencial administrativa no ambiente, sem chamar a rede', async () => {
-    process.env = { ...ENV };
-    const chamou = vi.fn();
-    comFetch(async (...args) => { chamou(...args); return resposta(200, {}); });
-    const r = await new Credencial().trocarSenha('sub-1', 'novaSenha123');
-    expect(r).toEqual({ trocada: false, motivo: 'keycloak sem credencial administrativa no ambiente' });
-    expect(chamou).not.toHaveBeenCalled();
-  });
-
-  it('recusa quando o keycloak nao concede o token administrativo', async () => {
-    Object.assign(process.env, CONFIGURADO);
-    comFetch(async () => resposta(401, {}));
-    const r = await new Credencial().trocarSenha('sub-1', 'novaSenha123');
-    expect(r).toEqual({ trocada: false, motivo: 'keycloak recusou a credencial administrativa' });
-  });
-
-  it('recusa quando a resposta do token nao tem access_token', async () => {
-    Object.assign(process.env, CONFIGURADO);
-    comFetch(async () => resposta(200, { token_type: 'bearer' }));
-    const r = await new Credencial().trocarSenha('sub-1', 'novaSenha123');
-    expect(r).toEqual({ trocada: false, motivo: 'keycloak recusou a credencial administrativa' });
-  });
-
-  it('recusa quando o reset de senha falha no keycloak', async () => {
-    Object.assign(process.env, CONFIGURADO);
-    let chamada = 0;
-    comFetch(async () => {
-      chamada += 1;
-      return chamada === 1 ? resposta(200, { access_token: 'tok' }) : resposta(404, {});
-    });
-    const r = await new Credencial().trocarSenha('sub-1', 'novaSenha123');
-    expect(r).toEqual({ trocada: false, motivo: 'keycloak respondeu 404' });
-  });
-
-  it('troca a senha quando o keycloak confirma', async () => {
-    Object.assign(process.env, CONFIGURADO);
-    let chamada = 0;
-    comFetch(async () => {
-      chamada += 1;
-      return chamada === 1 ? resposta(200, { access_token: 'tok' }) : resposta(204, {});
-    });
-    const r = await new Credencial().trocarSenha('sub-1', 'novaSenha123');
+  it('grava o hash, carimba a troca e zera o freio numa instrucao so', async () => {
+    const { credencial, executar } = montar();
+    const r = await credencial.trocarSenha(5, 'ana@x.br', 'senhaNova2027');
     expect(r).toEqual({ trocada: true });
+    expect(executar).toHaveBeenCalledTimes(1);
+
+    const [, sql, params] = executar.mock.calls[0] as [string, string, unknown[]];
+    expect(sql).toMatch(/ds_senha_hash = \?/);
+    expect(sql).toMatch(/st_credenciais_alteradas = NOW\(6\)/);
+    expect(sql).toMatch(/qt_falhas_login = 0/);
+    const [hash, id] = params as [string, number];
+    expect(id).toBe(5);
+    // O que vai ao banco e o hash, nunca a senha.
+    expect(hash).not.toContain('senhaNova2027');
+    expect(await conferirSenha('senhaNova2027', hash)).toBe(true);
   });
 
-  it('nunca lanca: falha de rede vira resposta { trocada: false }', async () => {
-    Object.assign(process.env, CONFIGURADO);
-    comFetch(async () => { throw new Error('ECONNREFUSED'); });
-    const r = await new Credencial().trocarSenha('sub-1', 'novaSenha123');
-    expect(r).toEqual({ trocada: false, motivo: 'keycloak: ECONNREFUSED' });
+  it('recusa senha fora da politica sem tocar no banco', async () => {
+    const { credencial, executar } = montar();
+    const r = await credencial.trocarSenha(5, 'ana@x.br', 'ana@x.br');
+    expect(r.trocada).toBe(false);
+    expect(executar).not.toHaveBeenCalled();
+  });
+
+  it('usuario que sumiu entre a consulta e a troca nao conta como trocada', async () => {
+    const { credencial } = montar(vi.fn().mockResolvedValue({ affectedRows: 0 }));
+    expect(await credencial.trocarSenha(5, 'ana@x.br', 'senhaNova2027'))
+      .toEqual({ trocada: false, motivo: 'usuario nao encontrado' });
+  });
+
+  it('nunca lanca: falha do banco vira resposta { trocada: false }', async () => {
+    const { credencial } = montar(vi.fn().mockRejectedValue(new Error('ECONNREFUSED')));
+    expect(await credencial.trocarSenha(5, 'ana@x.br', 'senhaNova2027'))
+      .toEqual({ trocada: false, motivo: 'banco: ECONNREFUSED' });
   });
 });
