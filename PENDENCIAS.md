@@ -6,6 +6,13 @@
 sessão de assistente de código, durante a montagem da produção. Devem ser
 tratadas como vazadas. Nenhuma delas está neste repositório.
 
+**Decisão (2026-10-01): a troca fica para depois da entrada do app em
+operação.** É um adiamento consciente, e não esquecimento. Até a troca, as duas
+senhas continuam válidas: quem as tiver entra direto no `dbsamu` com acesso total
+e envia e-mail como `suporte@cicatribio.com.br`. Quanto mais tempo passar, maior
+a janela. Vale fazer logo depois que a operação estabilizar, e não esperar a
+próxima revisão de segurança.
+
 | Credencial | Onde trocar | Depois de trocar, atualizar |
 |---|---|---|
 | Senha do `usr_samu` (MySQL `dbsamu` na CloudClusters) | painel da CloudClusters | `DATABASE_URL`, `DATABASE_URL_AUDITORIA`, `DATABASE_URL_PESQUISA` e `DATABASE_URL_ADMINISTRACAO` em Production na Vercel |
