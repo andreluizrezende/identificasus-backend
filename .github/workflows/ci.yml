@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
 
@@ -28,7 +28,7 @@ jobs:
   # grants do ADR-14 bastam: os servicos rodam como nri_assistencial, e uma
   # tabela esquecida no GRANT aparece aqui, e nao em producao.
   banco:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       mysql:
         # Mesma versao do docker-compose.yml.
