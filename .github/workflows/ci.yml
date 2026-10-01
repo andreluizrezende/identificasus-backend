@@ -64,6 +64,7 @@ jobs:
           banco --force < db/02_usuarios_por_finalidade.sql 2>/dev/null || true
           banco < db/05_cadeia_de_auditoria.sql
           banco < db/06_credencial_local.sql
+          banco < db/07_historico_de_senhas.sql
           banco < db/02_usuarios_por_finalidade.sql
 
       - run: npm run test:banco

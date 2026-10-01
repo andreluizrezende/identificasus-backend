@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { compare } from 'bcryptjs';
 import {
-  CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService, TrocaNaoConcluida,
+  CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService, SenhaRepetida,
+  TrocaNaoConcluida,
 } from './recuperacao.service';
 import { PEDIDOS_POR_JANELA, RESPOSTA_NEUTRA } from './recuperacao.esquemas';
 import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
@@ -29,6 +30,8 @@ function montar(opts: {
   usuarioLinhas?: unknown[];
   recuperacaoLinhas?: unknown[];
   trocaOk?: boolean;
+  repetida?: boolean;
+  preparoFalha?: boolean;
 }) {
   const consultar = vi.fn().mockImplementation(async (_fin: string, sql: string) => {
     if (sql.includes('FROM mob_usuario')) return opts.usuarioLinhas ?? [USUARIO];
@@ -44,7 +47,14 @@ function montar(opts: {
   } as unknown as Correio;
 
   const credencial = {
-    trocarSenha: vi.fn().mockResolvedValue(
+    preparar: vi.fn().mockResolvedValue(
+      opts.repetida
+        ? { pronta: false, repetida: true, motivo: 'senha igual a uma das 3 ultimas' }
+        : opts.preparoFalha
+          ? { pronta: false, motivo: 'banco: SELECT command denied' }
+          : { pronta: true, hash: 'hash-novo' },
+    ),
+    aplicar: vi.fn().mockResolvedValue(
       opts.trocaOk === false ? { trocada: false, motivo: 'banco fora' } : { trocada: true },
     ),
   } as unknown as Credencial;
@@ -132,7 +142,8 @@ describe('confirmar', () => {
     const servico = new RecuperacaoService(acesso, correio, credencial, auditoria);
     await expect(servico.confirmar(dados)).rejects.toBeInstanceOf(CodigoRecusado);
     expect(executar).toHaveBeenCalledTimes(1); // so o "queimar"
-    expect(credencial.trocarSenha).not.toHaveBeenCalled();
+    expect(credencial.preparar).not.toHaveBeenCalled();
+    expect(credencial.aplicar).not.toHaveBeenCalled();
   });
 
   it('codigo errado incrementa tentativas e recusa, sem trocar a senha', async () => {
@@ -143,7 +154,8 @@ describe('confirmar', () => {
     const servico = new RecuperacaoService(acesso, correio, credencial, auditoria);
     await expect(servico.confirmar(dados)).rejects.toBeInstanceOf(CodigoRecusado);
     expect(executar).toHaveBeenCalledTimes(1); // incrementa tentativas
-    expect(credencial.trocarSenha).not.toHaveBeenCalled();
+    expect(credencial.preparar).not.toHaveBeenCalled();
+    expect(credencial.aplicar).not.toHaveBeenCalled();
   });
 
   it('quando a gravacao da senha falha, sai como TrocaNaoConcluida', async () => {
@@ -165,8 +177,34 @@ describe('confirmar', () => {
     const servico = new RecuperacaoService(acesso, correio, credencial, auditoria);
     const r = await servico.confirmar(dados);
     expect(r.sucesso).toBe(true);
-    expect(credencial.trocarSenha).toHaveBeenCalledWith(1, 'ana@x.br', dados.nova_senha);
-    // So o queimar: hash e st_credenciais_alteradas saem juntos dentro de Credencial.
+    expect(credencial.preparar).toHaveBeenCalledWith(1, 'ana@x.br', dados.nova_senha);
+    expect(credencial.aplicar).toHaveBeenCalledWith(1, 'hash-novo');
+    // So o queimar: historico, hash e carimbo saem juntos dentro de Credencial.
     expect(executar).toHaveBeenCalledTimes(1);
+  });
+
+  it('falha do banco ao preparar: 500, mas SEM queimar o codigo', async () => {
+    vi.mocked(compare).mockResolvedValue(true as never);
+    const { acesso, correio, credencial, auditoria, executar } = montar({
+      recuperacaoLinhas: [{ id_recuperacao: 9, co_codigo_hash: 'hash-ok', qt_tentativas: 0 }],
+      preparoFalha: true,
+    });
+    const servico = new RecuperacaoService(acesso, correio, credencial, auditoria);
+    await expect(servico.confirmar(dados)).rejects.toBeInstanceOf(TrocaNaoConcluida);
+    expect(executar).not.toHaveBeenCalled();
+    expect(credencial.aplicar).not.toHaveBeenCalled();
+    expect(auditoria.registrar).toHaveBeenCalledWith(expect.objectContaining({ acao: 'RECUPERACAO_FALHOU' }));
+  });
+
+  it('senha repetida: recusa SEM queimar o codigo, para a pessoa tentar outra', async () => {
+    vi.mocked(compare).mockResolvedValue(true as never);
+    const { acesso, correio, credencial, auditoria, executar } = montar({
+      recuperacaoLinhas: [{ id_recuperacao: 9, co_codigo_hash: 'hash-ok', qt_tentativas: 0 }],
+      repetida: true,
+    });
+    const servico = new RecuperacaoService(acesso, correio, credencial, auditoria);
+    await expect(servico.confirmar(dados)).rejects.toBeInstanceOf(SenhaRepetida);
+    expect(executar).not.toHaveBeenCalled(); // nem queimar, nem contar tentativa
+    expect(credencial.aplicar).not.toHaveBeenCalled();
   });
 });

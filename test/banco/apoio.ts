@@ -152,6 +152,7 @@ export async function limparCenario(cen: Cenario): Promise<void> {
     await c.query('DELETE FROM mob_turno WHERE id_usuario IN (?)', [usuarios]);
     await c.query('DELETE FROM mob_sessao WHERE id_usuario IN (?)', [usuarios]);
     await c.query('DELETE FROM mob_recuperacao WHERE id_usuario IN (?)', [usuarios]);
+    await c.query('DELETE FROM mob_senha_historico WHERE id_usuario IN (?)', [usuarios]);
     // Daqui para baixo: desativar, nunca apagar. Ver o comentário da função.
     await c.query(
       "UPDATE mob_usuario SET st_ativo = 'I' WHERE id_usuario IN (?)", [usuarios],

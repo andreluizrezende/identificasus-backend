@@ -27,11 +27,15 @@ import 'dotenv/config';
 import { createConnection } from 'mysql2/promise';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import { perguntar, perguntarOculto } from './_terminal';
-import { SENHA_MINIMA, cifrarSenha, motivoDaRecusa } from '../src/acesso/senha';
+import {
+  SENHAS_NO_HISTORICO, SENHA_MINIMA, cifrarSenha, motivoDaRecusa, senhaJaUsada,
+} from '../src/acesso/senha';
 
 const FINALIDADES = ['ASSISTENCIAL', 'AUDITORIA', 'PESQUISA', 'ADMINISTRACAO'];
 
 interface LinhaId extends RowDataPacket { id_usuario: number }
+interface LinhaExistente extends RowDataPacket { id_usuario: number; ds_senha_hash: string | null }
+interface LinhaHistorico extends RowDataPacket { id_senha_historico: number; ds_senha_hash: string }
 interface LinhaPerfil extends RowDataPacket { id_perfil: number; co_perfil: string }
 
 async function principal(): Promise<void> {
@@ -87,6 +91,26 @@ async function principal(): Promise<void> {
       throw new Error('As senhas não conferem.');
     }
 
+    // Conta que já existe (mesmo CPF) tem a senha REDEFINIDA, e a regra de não
+    // repetir as últimas vale aqui como na recuperação (db/07). Conferido antes
+    // da confirmação, para ninguém responder "s" e só então descobrir.
+    const [existentes] = await conexao.query<LinhaExistente[]>(
+      'SELECT id_usuario, ds_senha_hash FROM mob_usuario WHERE nu_cpf = ?',
+      [nu_cpf],
+    );
+    const existente = existentes[0];
+    if (existente) {
+      const [anteriores] = await conexao.query<LinhaHistorico[]>(
+        `SELECT id_senha_historico, ds_senha_hash FROM mob_senha_historico
+          WHERE id_usuario = ? ORDER BY id_senha_historico DESC LIMIT ?`,
+        [existente.id_usuario, SENHAS_NO_HISTORICO - 1],
+      );
+      const hashes = [existente.ds_senha_hash, ...anteriores.map((l) => l.ds_senha_hash)];
+      if (await senhaJaUsada(senha, hashes)) {
+        throw new Error(`Essa senha foi usada recentemente. Escolha uma diferente das ${SENHAS_NO_HISTORICO} últimas.`);
+      }
+    }
+
     console.log('\n─── confirme ───────────────────────────────');
     console.log(`Nome:       ${no_usuario}`);
     console.log(`E-mail:     ${ds_email}`);
@@ -103,6 +127,14 @@ async function principal(): Promise<void> {
 
     await conexao.beginTransaction();
     try {
+      // A senha que sai vai para o histórico antes de ser sobrescrita.
+      if (existente?.ds_senha_hash) {
+        await conexao.query<ResultSetHeader>(
+          'INSERT INTO mob_senha_historico (id_usuario, ds_senha_hash) VALUES (?, ?)',
+          [existente.id_usuario, existente.ds_senha_hash],
+        );
+      }
+
       await conexao.query<ResultSetHeader>(
         `INSERT INTO mob_usuario
            (nu_cpf, no_usuario, ds_email, ds_senha_hash, co_finalidade, ds_cargo, st_ativo)
@@ -125,6 +157,20 @@ async function principal(): Promise<void> {
       );
       const idUsuario = linhas[0]?.id_usuario;
       if (!idUsuario) throw new Error('mob_usuario gravado mas não encontrado — abortando.');
+
+      // Só as mais recentes ficam no histórico (ver db/07).
+      const [guardadas] = await conexao.query<LinhaHistorico[]>(
+        `SELECT id_senha_historico, ds_senha_hash FROM mob_senha_historico
+          WHERE id_usuario = ? ORDER BY id_senha_historico DESC`,
+        [idUsuario],
+      );
+      const sobrando = guardadas.slice(SENHAS_NO_HISTORICO - 1).map((l) => l.id_senha_historico);
+      if (sobrando.length > 0) {
+        await conexao.query<ResultSetHeader>(
+          'DELETE FROM mob_senha_historico WHERE id_senha_historico IN (?)',
+          [sobrando],
+        );
+      }
 
       for (const co of escolhidos) {
         const perfil = perfis.find((p) => p.co_perfil === co);

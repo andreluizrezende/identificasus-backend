@@ -44,6 +44,7 @@ Documentação da API em `http://localhost:3000/api/docs` (só fora de produçã
 | `npm run test:banco` | testes contra o MySQL de verdade (precisa do `dbsamu`; roda no CI) |
 | `npm run criar-administrador` | cria usuário em `mob_usuario`, com finalidade e senha |
 | `npm run semear-ambiente-local` | usuário de teste com senha conhecida (só desenvolvimento) |
+| `npm run db:historico` | aplica `db/07_historico_de_senhas.sql` (banco local) |
 
 ## CI
 
@@ -115,6 +116,11 @@ arquitetura em `db/06_credencial_local.sql`.
 - **Senha:** hash scrypt em `mob_usuario.ds_senha_hash` (`src/acesso/senha.ts`),
   com política de no mínimo 10 caracteres e diferente do e-mail. Continua
   existindo **um** lugar só que guarda credencial.
+- **Histórico:** a senha nova não pode repetir nenhuma das 3 últimas, contando a
+  atual. As 2 anteriores ficam em `mob_senha_historico` (`db/07`), só como
+  hash, e as mais velhas são apagadas a cada troca. Na recuperação, a repetição
+  é conferida antes de queimar o código: a pessoa escolhe outra senha com o
+  mesmo código.
 - **Token:** JWT HS256 emitido e conferido pela própria API
   (`src/acesso/token.service.ts`), assinado com `JWT_SEGREDO`. O de acesso vale
   15 minutos; o de renovação, 72 h, e não abre rota (`typ` diferente).
@@ -161,7 +167,8 @@ db/
 ├── 03_recuperacao_de_senha.sql    mob_recuperacao
 ├── 04_homologacao.sql             base, viatura e aparelho para testar
 ├── 05_cadeia_de_auditoria.sql     sp_mob_ultimo_elo (ver abaixo)
-└── 06_credencial_local.sql        senha, finalidade e freio em mob_usuario
+├── 06_credencial_local.sql        senha, finalidade e freio em mob_usuario
+└── 07_historico_de_senhas.sql     as 2 senhas anteriores, para não repetir
 test/banco/                        testes contra o MySQL de verdade
 ```
 
@@ -209,8 +216,6 @@ eram *grants* faltando, e um deles falhava em silêncio.
 
 ## Pendências
 
-- Histórico de senhas (o realm do Keycloak recusava as 3 últimas) não foi
-  reimplementado.
 - Outbox transacional e publicação na RNDS.
 - Console da Central de Regulação: comparação, dupla conferência e adjudicação.
 - Ponte pericial: propositalmente ausente. A regra

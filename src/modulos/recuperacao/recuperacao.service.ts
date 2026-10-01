@@ -19,6 +19,11 @@ export class MuitosPedidos extends Error {}
 export class CodigoRecusado extends Error {}
 /** O codigo era bom, mas a gravacao da senha nova falhou. Problema do servidor. */
 export class TrocaNaoConcluida extends Error {}
+/**
+ * A senha nova repete uma das ultimas (ver db/07_historico_de_senhas.sql). O
+ * codigo NAO e queimado: a pessoa escolhe outra senha com o mesmo codigo.
+ */
+export class SenhaRepetida extends Error {}
 
 interface LinhaUsuario extends RowDataPacket {
   id_usuario: number;
@@ -165,19 +170,38 @@ export class RecuperacaoService {
       throw new CodigoRecusado();
     }
 
+    // (!) O HISTORICO E CONFERIDO ANTES DE QUEIMAR O CODIGO. Senha repetida e
+    //     erro de quem digitou, nao tentativa de adivinhar: queimar o codigo
+    //     por isso obrigaria a pedir outro e-mail. O codigo ja foi conferido
+    //     acima, entao quem chega aqui provou que le a caixa de entrada.
+    const preparo = await this.credencial.preparar(
+      usuario.id_usuario,
+      usuario.ds_email,
+      dados.nova_senha,
+    );
+    if (!preparo.pronta && preparo.repetida) throw new SenhaRepetida();
+    // Falha ao preparar (banco fora, grant faltando) tambem nao queima: nada
+    // foi gravado, e queimar so obrigaria a pedir outro e-mail.
+    if (!preparo.pronta) {
+      await this.auditoria.registrar({
+        usuarioId: usuario.id_usuario,
+        finalidade: 'ASSISTENCIAL',
+        acao: 'RECUPERACAO_FALHOU',
+        recurso: `mob_usuario/${usuario.id_usuario}`,
+        detalhe: { motivo: preparo.motivo },
+      });
+      throw new TrocaNaoConcluida(preparo.motivo);
+    }
+
     // (!) A ORDEM IMPORTA: marcar o uso ANTES de trocar a senha. Se a troca
     //     falhar, sobra um codigo queimado — irritante e corrigivel. Na ordem
     //     inversa, uma falha entre as duas deixaria a senha nova com o codigo
     //     ainda valido.
     await this.queimar(pedido.id_recuperacao);
 
-    // Hash novo e st_credenciais_alteradas saem na mesma instrucao (ver
-    // Credencial): e o carimbo que derruba as sessoes abertas com a senha velha.
-    const troca = await this.credencial.trocarSenha(
-      usuario.id_usuario,
-      usuario.ds_email,
-      dados.nova_senha,
-    );
+    // Historico, hash novo e st_credenciais_alteradas saem na mesma transacao
+    // (ver Credencial): o carimbo e o que derruba as sessoes da senha velha.
+    const troca = await this.credencial.aplicar(usuario.id_usuario, preparo.hash);
     if (!troca.trocada) {
       await this.auditoria.registrar({
         usuarioId: usuario.id_usuario,

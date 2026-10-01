@@ -16,7 +16,7 @@ próxima revisão de segurança.
 | Credencial | Onde trocar | Depois de trocar, atualizar |
 |---|---|---|
 | Senha do `usr_samu` (MySQL `dbsamu` na CloudClusters) | painel da CloudClusters | `DATABASE_URL`, `DATABASE_URL_AUDITORIA`, `DATABASE_URL_PESQUISA` e `DATABASE_URL_ADMINISTRACAO` em Production na Vercel |
-| Senha da caixa `suporte@cicatribio.com.br` (SMTP) | painel de e-mail da Hostinger | `SMTP_PASS` em Production na Vercel |
+| ~~Senha da caixa `suporte@cicatribio.com.br` (SMTP)~~ | **Trocada em 2026-10-01** e conferida em produção (o e-mail de recuperação chegou) | — |
 
 **Ordem para não derrubar a produção:**
 

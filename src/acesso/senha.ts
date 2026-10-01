@@ -99,3 +99,22 @@ async function conferir(senha: string, guardado: string): Promise<boolean> {
   // timingSafeEqual exige o mesmo comprimento; hash adulterado sai aqui.
   return obtido.length === esperado.length && timingSafeEqual(obtido, esperado);
 }
+
+/**
+ * Quantas senhas a nova não pode repetir, contando a atual. Era o
+ * `passwordHistory(3)` do realm do Keycloak (ver db/07_historico_de_senhas.sql).
+ */
+export const SENHAS_NO_HISTORICO = 3;
+
+/**
+ * A senha bate com algum destes hashes? Para no primeiro que bater.
+ *
+ * (!) CUSTA UM SCRYPT POR HASH, e cada um leva centenas de milissegundos. Quem
+ *     chama confere uma vez só por troca: ver `Credencial.preparar`.
+ */
+export async function senhaJaUsada(senha: string, hashes: Array<string | null>): Promise<boolean> {
+  for (const hash of hashes) {
+    if (hash && (await conferirSenha(senha, hash))) return true;
+  }
+  return false;
+}

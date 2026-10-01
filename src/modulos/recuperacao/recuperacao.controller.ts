@@ -5,8 +5,10 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Publico } from '@/acesso/publico.decorator';
 import { ZodValidacaoPipe } from '@/comum/zod-validacao.pipe';
 import {
-  CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService, TrocaNaoConcluida,
+  CanalIndisponivel, CodigoRecusado, MuitosPedidos, RecuperacaoService, SenhaRepetida,
+  TrocaNaoConcluida,
 } from './recuperacao.service';
+import { SENHAS_NO_HISTORICO } from '@/acesso/senha';
 import { esquemaConfirmacao, esquemaPedido } from './recuperacao.esquemas';
 import type { Confirmacao, Pedido, RespostaRecuperacao } from './recuperacao.esquemas';
 
@@ -87,6 +89,16 @@ export class RecuperacaoController {
         HttpStatus.UNAUTHORIZED,
       );
     }
+    if (erro instanceof SenhaRepetida) {
+      return new HttpException(
+        {
+          sucesso: false,
+          mensagem: 'Esta senha foi usada recentemente',
+          acao: `Escolha uma senha diferente das ${SENHAS_NO_HISTORICO} ultimas; o codigo continua valendo`,
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
     if (erro instanceof TrocaNaoConcluida) {
       // O codigo ja foi queimado (ver a ordem em RecuperacaoService): a pessoa
       // precisa saber que tem de pedir outro, e nao so tentar de novo.
@@ -94,7 +106,7 @@ export class RecuperacaoController {
         {
           sucesso: false,
           mensagem: 'Nao foi possivel gravar a senha nova',
-          acao: 'Peca um codigo novo; se persistir, avise o plantao de TI',
+          acao: 'Tente de novo em instantes; se persistir, peca um codigo novo e avise o plantao de TI',
         },
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
