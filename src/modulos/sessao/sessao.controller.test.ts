@@ -1,7 +1,9 @@
 import { HttpStatus } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { SessaoController } from './sessao.controller';
-import { AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado } from './sessao.service';
+import {
+  AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado, SessaoEncerrada,
+} from './sessao.service';
 
 const controller = new SessaoController({} as never);
 const traduzir = (erro: unknown) =>
@@ -14,6 +16,10 @@ describe('traducao de erros de entrada', () => {
 
   it('credencial recusada sai como 401', () => {
     expect(traduzir(new CredencialRecusada()).getStatus()).toBe(HttpStatus.UNAUTHORIZED);
+  });
+
+  it('sessao encerrada (renovacao recusada) sai como 401', () => {
+    expect(traduzir(new SessaoEncerrada()).getStatus()).toBe(HttpStatus.UNAUTHORIZED);
   });
 
   it('autenticacao indisponivel sai como 503', () => {

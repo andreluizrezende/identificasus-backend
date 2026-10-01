@@ -6,10 +6,13 @@ import { ExigeFinalidade } from '@/acesso/finalidade.decorator';
 import { Publico } from '@/acesso/publico.decorator';
 import { ZodValidacaoPipe } from '@/comum/zod-validacao.pipe';
 import {
-  AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado, SessaoService,
+  AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado, SessaoEncerrada,
+  SessaoService,
 } from './sessao.service';
-import { esquemaEntrada, esquemaSaida } from './sessao.esquemas';
-import type { Entrada, Saida, SessaoAberta } from './sessao.esquemas';
+import { esquemaEntrada, esquemaRenovacao, esquemaSaida } from './sessao.esquemas';
+import type {
+  AcessoRenovado, Entrada, Renovacao, Saida, SessaoAberta,
+} from './sessao.esquemas';
 
 interface RequisicaoDoCampo {
   ip?: string;
@@ -29,6 +32,24 @@ export class SessaoController {
   async entrar(@Body() dados: Entrada, @Req() req: RequisicaoDoCampo): Promise<SessaoAberta> {
     try {
       return await this.servico.entrar(dados, req.ip ?? 'desconhecido');
+    } catch (erro) {
+      throw this.traduzir(erro);
+    }
+  }
+
+  /**
+   * (!) PÚBLICA PORQUE TEM DE SER: quem chega aqui é justamente quem está com
+   *     o token de acesso vencido. Quem autentica é o token de renovação, no
+   *     corpo, e o serviço reconfere a sessão inteira no banco.
+   */
+  @Post('renovacao')
+  @Publico()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Troca o token de renovação por um token de acesso novo' })
+  @UsePipes(new ZodValidacaoPipe(esquemaRenovacao))
+  async renovar(@Body() dados: Renovacao): Promise<AcessoRenovado> {
+    try {
+      return await this.servico.renovar(dados.renovacao);
     } catch (erro) {
       throw this.traduzir(erro);
     }
@@ -80,6 +101,16 @@ export class SessaoController {
           sucesso: false,
           mensagem: 'E-mail ou senha incorretos',
           acao: 'Confira os dados e tente de novo',
+        },
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
+    if (erro instanceof SessaoEncerrada) {
+      return new HttpException(
+        {
+          sucesso: false,
+          mensagem: 'Sua sessão foi encerrada',
+          acao: 'Entre novamente',
         },
         HttpStatus.UNAUTHORIZED,
       );

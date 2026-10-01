@@ -2,11 +2,14 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
+import { credencialMudouDepoisDoToken } from '@/acesso/credencial-alterada';
 import { conferirSenha } from '@/acesso/senha';
-import { AssinaturaIndisponivel, TokenService } from '@/acesso/token.service';
+import {
+  AssinaturaIndisponivel, SEGUNDOS_DE_ACESSO, TokenRecusado, TokenService,
+} from '@/acesso/token.service';
 import type { TokensEmitidos } from '@/acesso/token.service';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
-import type { Entrada, SessaoAberta } from './sessao.esquemas';
+import type { AcessoRenovado, Entrada, SessaoAberta } from './sessao.esquemas';
 
 /** Aparelho fora de `mob_dispositivo`, inativo ou revogado. */
 export class DispositivoNaoAutorizado extends Error {}
@@ -14,6 +17,12 @@ export class DispositivoNaoAutorizado extends Error {}
 export class CredencialRecusada extends Error {}
 /** Assinatura de token sem configuração. Não é culpa de quem está entrando. */
 export class AutenticacaoIndisponivel extends Error {}
+/**
+ * A renovação não vale mais: token de renovação inválido, sessão encerrada ou
+ * vencida, conta desativada ou senha trocada depois do login. Tudo isto, e só
+ * isto, sai como o mesmo 401 — e a resposta para todos é entrar de novo.
+ */
+export class SessaoEncerrada extends Error {}
 
 /** 72 horas: o limite da sessão fora de linha (RF-11.04). */
 const HORAS_DE_SESSAO = 72;
@@ -49,6 +58,13 @@ interface LinhaUsuario extends RowDataPacket {
 
 interface LinhaPerfil extends RowDataPacket {
   co_perfil: string;
+}
+
+interface LinhaRenovacao extends RowDataPacket {
+  ds_email: string | null;
+  co_finalidade: string | null;
+  st_ativo: string;
+  st_credenciais_alteradas: string | null;
 }
 
 /**
@@ -144,6 +160,72 @@ export class SessaoService {
         no_base: dispositivo.no_base,
       },
     };
+  }
+
+  /**
+   * Troca o token de renovação por um token de acesso novo, sem pedir senha.
+   * É o que sustenta as 72 h: o token de acesso vence em 15 minutos, e o
+   * aparelho renova quando tem rede.
+   *
+   * (!) CONFERE TUDO DE NOVO, NO BANCO, A CADA RENOVAÇÃO. O token de renovação
+   *     prova só que houve um login; não prova que ele ainda vale. A cada 15
+   *     minutos são conferidas, de novo, as quatro coisas que encerram uma
+   *     sessão: o "sair" do aparelho (`st_encerramento`), o fim das 72 h
+   *     (`st_expiracao`), a conta desativada (`st_ativo`) e a senha trocada
+   *     depois do login (`st_credenciais_alteradas`).
+   *
+   * (!) A FINALIDADE VEM DO BANCO, E NÃO DO TOKEN ANTIGO. Se a administração
+   *     mudou a finalidade de alguém, a mudança vale na próxima renovação, sem
+   *     esperar 72 h.
+   */
+  async renovar(renovacao: string): Promise<AcessoRenovado> {
+    let titular;
+    try {
+      titular = await this.token.verificarRenovacao(renovacao);
+    } catch (erro) {
+      if (erro instanceof TokenRecusado) throw new SessaoEncerrada();
+      throw erro;
+    }
+
+    const usuarios = await this.acesso.consultar<LinhaRenovacao>(
+      'ASSISTENCIAL',
+      `SELECT ds_email, co_finalidade, st_ativo, st_credenciais_alteradas
+         FROM mob_usuario WHERE id_usuario = ? LIMIT 1`,
+      [titular.idUsuario],
+    );
+    const usuario = usuarios[0];
+    if (!usuario || usuario.st_ativo !== 'A') throw new SessaoEncerrada();
+    if (credencialMudouDepoisDoToken(usuario.st_credenciais_alteradas, titular.emitidoEm)) {
+      throw new SessaoEncerrada();
+    }
+
+    // UTC_TIMESTAMP, e não NOW: st_expiracao é gravada em UTC (comoMySQL),
+    // e NOW segue o fuso da sessão do banco, que nem sempre é UTC.
+    const sessoes = await this.acesso.consultar<RowDataPacket>(
+      'ASSISTENCIAL',
+      `SELECT 1 FROM mob_sessao
+        WHERE co_token = ? AND id_usuario = ?
+          AND st_encerramento IS NULL AND st_expiracao > UTC_TIMESTAMP(6)
+        LIMIT 1`,
+      [titular.coSessao, titular.idUsuario],
+    );
+    if (sessoes.length === 0) throw new SessaoEncerrada();
+
+    try {
+      const token = await this.token.emitirAcesso({
+        idUsuario: titular.idUsuario,
+        finalidade: usuario.co_finalidade,
+        dsEmail: usuario.ds_email,
+        coSessao: titular.coSessao,
+      });
+      return { token, expiraEmSegundos: SEGUNDOS_DE_ACESSO };
+    } catch (erro) {
+      if (erro instanceof AssinaturaIndisponivel) {
+        this.log.error(erro.message);
+        throw new AutenticacaoIndisponivel(erro.message);
+      }
+      throw erro;
+    }
   }
 
   /**

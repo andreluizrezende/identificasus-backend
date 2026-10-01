@@ -3,6 +3,7 @@ import { Reflector } from '@nestjs/core';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from './banco-por-finalidade.service';
 import { CHAVE_PUBLICO } from './publico.decorator';
+import { credencialMudouDepoisDoToken } from './credencial-alterada';
 import { TokenRecusado, TokenService } from './token.service';
 import type { Portador } from './token.service';
 
@@ -77,7 +78,7 @@ export class AutenticacaoGuard implements CanActivate {
       });
     }
 
-    if (this.credencialMudouDepoisDoToken(usuario.st_credenciais_alteradas, portador.emitidoEm)) {
+    if (credencialMudouDepoisDoToken(usuario.st_credenciais_alteradas, portador.emitidoEm)) {
       throw new UnauthorizedException({
         sucesso: false,
         mensagem: 'Sua senha foi alterada',
@@ -126,21 +127,5 @@ export class AutenticacaoGuard implements CanActivate {
       });
     }
     return casado[1];
-  }
-
-  /**
-   * O pool abre com `dateStrings: true`, então a coluna chega como texto do
-   * MySQL (`YYYY-MM-DD HH:MM:SS.ffffff`) — em UTC, que é como o pool escreve.
-   * O `Z` no fim é o que impede o Node de reinterpretar isso no fuso da
-   * máquina e deslocar a comparação em três horas.
-   */
-  private credencialMudouDepoisDoToken(coluna: string | null, emitidoEm: number): boolean {
-    if (!coluna) return false;
-    const alteradaEm = Date.parse(`${coluna.replace(' ', 'T')}Z`);
-    if (Number.isNaN(alteradaEm)) return false;
-    // Um segundo de folga: `iat` tem resolução de segundo e a coluna, de
-    // microssegundo. Sem a folga, um token emitido no mesmo segundo da troca
-    // seria derrubado por arredondamento.
-    return Math.floor(alteradaEm / 1000) > emitidoEm + 1;
   }
 }

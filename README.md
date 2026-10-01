@@ -118,6 +118,11 @@ arquitetura em `db/06_credencial_local.sql`.
 - **Token:** JWT HS256 emitido e conferido pela própria API
   (`src/acesso/token.service.ts`), assinado com `JWT_SEGREDO`. O de acesso vale
   15 minutos; o de renovação, 72 h, e não abre rota (`typ` diferente).
+- **Renovação:** `POST /api/sessao/renovacao` troca o token de renovação por um
+  token de acesso novo, sem senha. A cada renovação o banco é conferido de
+  novo: sessão encerrada pelo "sair", fim das 72 h, conta desativada ou senha
+  trocada depois do login dão o mesmo 401 ("Sua sessão foi encerrada"). A
+  finalidade vem do banco, então uma mudança vale na próxima renovação.
 - **Freio de tentativas:** a partir da 5ª senha errada seguida, a conta espera
   60 s a mais por erro, até 15 minutos. Conta inexistente, inativa, bloqueada e
   senha errada dão o mesmo 401, no mesmo tempo.
@@ -204,9 +209,6 @@ eram *grants* faltando, e um deles falhava em silêncio.
 
 ## Pendências
 
-- Rota de renovação do token ainda não implementada: o token de renovação já é
-  emitido no login, mas hoje o acesso vale 15 minutos e a sessão offline de
-  72 h depende de o aplicativo renovar quando houver rede.
 - Histórico de senhas (o realm do Keycloak recusava as 3 últimas) não foi
   reimplementado.
 - Outbox transacional e publicação na RNDS.

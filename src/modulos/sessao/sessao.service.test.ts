@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado, SessaoService,
+  AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado, SessaoEncerrada,
+  SessaoService,
 } from './sessao.service';
 import { conferirSenha } from '@/acesso/senha';
-import { AssinaturaIndisponivel } from '@/acesso/token.service';
+import { AssinaturaIndisponivel, TokenRecusado } from '@/acesso/token.service';
 import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import type { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
 import type { TokenService } from '@/acesso/token.service';
@@ -119,6 +120,81 @@ describe('entrar', () => {
     });
     expect(executar).toHaveBeenCalledTimes(1); // grava a sessao
     expect(auditoria.registrar).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('renovar', () => {
+  const RENOVAVEL = { idUsuario: 5, coSessao: 'sessao-1', emitidoEm: 2_000_000_000 };
+  const CONTA = {
+    ds_email: 'ana@x.br', co_finalidade: 'ASSISTENCIAL', st_ativo: 'A', st_credenciais_alteradas: null,
+  };
+
+  function montarRenovacao(opts: {
+    renovavel?: unknown;
+    conta?: unknown[];
+    sessao?: unknown[];
+  }) {
+    const consultar = vi.fn().mockImplementation(async (_fin: string, sql: string) => {
+      if (sql.includes('FROM mob_sessao')) return opts.sessao ?? [{ 1: 1 }];
+      if (sql.includes('FROM mob_usuario')) return opts.conta ?? [CONTA];
+      return [];
+    });
+    const acesso = { consultar, executar: vi.fn() } as unknown as BancoPorFinalidade;
+    const verificarRenovacao = vi.fn(async () => {
+      if (opts.renovavel instanceof Error) throw opts.renovavel;
+      return opts.renovavel ?? RENOVAVEL;
+    });
+    const emitirAcesso = vi.fn().mockResolvedValue('acesso-novo');
+    const token = { verificarRenovacao, emitirAcesso } as unknown as TokenService;
+    const auditoria = { registrar: vi.fn() } as unknown as AuditoriaService;
+    return { servico: new SessaoService(acesso, token, auditoria), consultar, emitirAcesso };
+  }
+
+  it('sessao viva: devolve token de acesso novo, com a finalidade atual do banco', async () => {
+    const { servico, emitirAcesso } = montarRenovacao({
+      conta: [{ ...CONTA, co_finalidade: 'AUDITORIA' }],
+    });
+    expect(await servico.renovar('r')).toEqual({ token: 'acesso-novo', expiraEmSegundos: 900 });
+    expect(emitirAcesso).toHaveBeenCalledWith({
+      idUsuario: 5, finalidade: 'AUDITORIA', dsEmail: 'ana@x.br', coSessao: 'sessao-1',
+    });
+  });
+
+  it('token de renovacao invalido vira SessaoEncerrada, sem tocar no banco', async () => {
+    const { servico, consultar } = montarRenovacao({ renovavel: new TokenRecusado('assinatura') });
+    await expect(servico.renovar('r')).rejects.toBeInstanceOf(SessaoEncerrada);
+    expect(consultar).not.toHaveBeenCalled();
+  });
+
+  it('conta desativada ou removida nao renova', async () => {
+    await expect(montarRenovacao({ conta: [{ ...CONTA, st_ativo: 'I' }] }).servico.renovar('r'))
+      .rejects.toBeInstanceOf(SessaoEncerrada);
+    await expect(montarRenovacao({ conta: [] }).servico.renovar('r'))
+      .rejects.toBeInstanceOf(SessaoEncerrada);
+  });
+
+  it('senha trocada depois do login nao renova', async () => {
+    // Login em 2033-05-18 (emitidoEm 2e9 s); troca de senha em 2034.
+    const { servico, emitirAcesso } = montarRenovacao({
+      conta: [{ ...CONTA, st_credenciais_alteradas: '2034-01-01 00:00:00.000000' }],
+    });
+    await expect(servico.renovar('r')).rejects.toBeInstanceOf(SessaoEncerrada);
+    expect(emitirAcesso).not.toHaveBeenCalled();
+  });
+
+  it('senha trocada ANTES do login nao atrapalha', async () => {
+    const { servico } = montarRenovacao({
+      conta: [{ ...CONTA, st_credenciais_alteradas: '2030-01-01 00:00:00.000000' }],
+    });
+    await expect(servico.renovar('r')).resolves.toMatchObject({ token: 'acesso-novo' });
+  });
+
+  it('sessao encerrada ("sair") ou vencida nao renova', async () => {
+    const { servico, consultar } = montarRenovacao({ sessao: [] });
+    await expect(servico.renovar('r')).rejects.toBeInstanceOf(SessaoEncerrada);
+    const sql = String(consultar.mock.calls.find((c) => String(c[1]).includes('mob_sessao'))?.[1]);
+    expect(sql).toMatch(/st_encerramento IS NULL/);
+    expect(sql).toMatch(/st_expiracao > UTC_TIMESTAMP\(6\)/);
   });
 });
 

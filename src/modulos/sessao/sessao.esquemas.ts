@@ -14,6 +14,18 @@ export const esquemaEntrada = z.object({
 });
 export type Entrada = z.infer<typeof esquemaEntrada>;
 
+/** O token de renovação que o login entregou, e só ele. */
+export const esquemaRenovacao = z.object({
+  renovacao: z.string().min(1).max(4096),
+});
+export type Renovacao = z.infer<typeof esquemaRenovacao>;
+
+export interface AcessoRenovado {
+  /** Token de acesso novo. Vale 15 minutos, como o do login. */
+  token: string;
+  expiraEmSegundos: number;
+}
+
 export const esquemaSaida = z.object({
   coSessao: z.string().uuid(),
   ds_motivo: z.string().trim().max(120).optional(),

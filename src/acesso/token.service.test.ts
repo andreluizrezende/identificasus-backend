@@ -58,6 +58,41 @@ describe('emissao', () => {
   });
 });
 
+describe('renovacao', () => {
+  it('o token de renovacao do login volta com usuario, sessao e emissao', async () => {
+    const servico = new TokenService();
+    const { renovacao } = await servico.emitir(TITULAR);
+    const r = await servico.verificarRenovacao(renovacao);
+    expect(r).toMatchObject({ idUsuario: 7, coSessao: 'sessao-1' });
+    expect(typeof r.emitidoEm).toBe('number');
+  });
+
+  it('token de acesso nao serve como renovacao', async () => {
+    const servico = new TokenService();
+    const { acesso } = await servico.emitir(TITULAR);
+    await expect(servico.verificarRenovacao(acesso)).rejects.toThrow(/renova/);
+  });
+
+  it('renovacao sem sid e recusada', async () => {
+    const token = await forjar({ typ: 'renovacao' });
+    await expect(new TokenService().verificarRenovacao(token)).rejects.toThrow(/sid/);
+  });
+
+  it('renovacao assinada com outro segredo e recusada', async () => {
+    const token = await forjar(
+      { typ: 'renovacao', sid: 's' },
+      { segredo: 'outro-segredo-tambem-com-mais-de-32-bytes' },
+    );
+    await expect(new TokenService().verificarRenovacao(token)).rejects.toBeInstanceOf(TokenRecusado);
+  });
+
+  it('emitirAcesso devolve so um token de acesso, valido no guard', async () => {
+    const servico = new TokenService();
+    const acesso = await servico.emitirAcesso(TITULAR);
+    expect(await servico.verificar(acesso)).toMatchObject({ sub: '7', purpose: 'ASSISTENCIAL' });
+  });
+});
+
 describe('verificacao', () => {
   it('o token de renovacao nao abre rota', async () => {
     const servico = new TokenService();

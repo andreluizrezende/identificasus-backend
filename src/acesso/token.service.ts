@@ -21,6 +21,14 @@ export interface Titular {
   coSessao: string;
 }
 
+/** O que um token de renovacao valido diz: de quem e, de qual sessao, desde quando. */
+export interface Renovavel {
+  idUsuario: number;
+  coSessao: string;
+  /** Emissao do token de renovacao (= do login), em segundos. */
+  emitidoEm: number;
+}
+
 export interface TokensEmitidos {
   acesso: string;
   renovacao: string;
@@ -64,23 +72,9 @@ const BYTES_MINIMOS_DO_SEGREDO = 32;
 export class TokenService {
   private readonly log = new Logger('token');
 
+  /** Os dois tokens do login: acesso (15 min) e renovação (72 h). */
   async emitir(t: Titular): Promise<TokensEmitidos> {
-    const chave = this.chave();
-    const claims = {
-      purpose: t.finalidade ?? undefined,
-      email: t.dsEmail ?? undefined,
-      sid: t.coSessao,
-    };
-
-    const acesso = await new SignJWT({ ...claims, typ: 'acesso' })
-      .setProtectedHeader({ alg: ALGORITMO })
-      .setSubject(String(t.idUsuario))
-      .setIssuer(EMISSOR)
-      .setAudience(AUDIENCIA)
-      .setIssuedAt()
-      .setExpirationTime(`${SEGUNDOS_DE_ACESSO}s`)
-      .sign(chave);
-
+    const acesso = await this.emitirAcesso(t);
     const renovacao = await new SignJWT({ sid: t.coSessao, typ: 'renovacao' })
       .setProtectedHeader({ alg: ALGORITMO })
       .setSubject(String(t.idUsuario))
@@ -88,13 +82,49 @@ export class TokenService {
       .setAudience(AUDIENCIA)
       .setIssuedAt()
       .setExpirationTime(`${SEGUNDOS_DE_RENOVACAO}s`)
-      .sign(chave);
-
+      .sign(this.chave());
     return { acesso, renovacao, expiraEmSegundos: SEGUNDOS_DE_ACESSO };
+  }
+
+  /**
+   * Só o token de acesso: é o que a renovação devolve.
+   *
+   * (!) A RENOVAÇÃO NÃO EMITE OUTRO TOKEN DE RENOVAÇÃO. O de renovação vence
+   *     junto com a sessão de 72 h; trocá-lo a cada 15 min só multiplicaria
+   *     credenciais válidas em circulação, sem estender nada.
+   */
+  async emitirAcesso(t: Titular): Promise<string> {
+    return new SignJWT({
+      purpose: t.finalidade ?? undefined,
+      email: t.dsEmail ?? undefined,
+      sid: t.coSessao,
+      typ: 'acesso',
+    })
+      .setProtectedHeader({ alg: ALGORITMO })
+      .setSubject(String(t.idUsuario))
+      .setIssuer(EMISSOR)
+      .setAudience(AUDIENCIA)
+      .setIssuedAt()
+      .setExpirationTime(`${SEGUNDOS_DE_ACESSO}s`)
+      .sign(this.chave());
   }
 
   /** Só aceita token de acesso. Qualquer falha sai como `TokenRecusado`. */
   async verificar(token: string): Promise<Portador> {
+    return this.doPayload(await this.abrir(token));
+  }
+
+  /** Só aceita token de renovação. Qualquer falha sai como `TokenRecusado`. */
+  async verificarRenovacao(token: string): Promise<Renovavel> {
+    const payload = await this.abrir(token);
+    if (payload['typ'] !== 'renovacao') throw new TokenRecusado('token não é de renovação');
+    const sid = payload['sid'];
+    if (typeof sid !== 'string' || sid.length === 0) throw new TokenRecusado('token sem `sid`');
+    const { sub, iat } = this.essenciais(payload);
+    return { idUsuario: Number(sub), coSessao: sid, emitidoEm: iat };
+  }
+
+  private async abrir(token: string): Promise<JWTPayload> {
     try {
       const { payload } = await jwtVerify(token, this.chave(), {
         issuer: EMISSOR,
@@ -102,12 +132,12 @@ export class TokenService {
         algorithms: [ALGORITMO],
         clockTolerance: 30,
       });
-      return this.doPayload(payload);
+      return payload;
     } catch (erro) {
       const motivo = erro instanceof Error ? erro.message : 'falha desconhecida';
       // O motivo fica no log do servidor; quem recebeu o 401 vê só o 401.
       this.log.debug(`token recusado: ${motivo}`);
-      throw erro instanceof TokenRecusado ? erro : new TokenRecusado(motivo);
+      throw new TokenRecusado(motivo);
     }
   }
 
@@ -123,6 +153,17 @@ export class TokenService {
 
   private doPayload(payload: JWTPayload): Portador {
     if (payload['typ'] !== 'acesso') throw new TokenRecusado('token não é de acesso');
+    const { sub, iat } = this.essenciais(payload);
+    const email = payload['email'];
+    return {
+      sub,
+      emitidoEm: iat,
+      purpose: payload['purpose'],
+      ds_email: typeof email === 'string' ? email : null,
+    };
+  }
+
+  private essenciais(payload: JWTPayload): { sub: string; iat: number } {
     const sub = payload.sub;
     if (typeof sub !== 'string' || !/^[1-9]\d*$/.test(sub)) {
       throw new TokenRecusado('token sem `sub` válido');
@@ -134,12 +175,6 @@ export class TokenService {
       // resposta que não desliga um controle em silêncio.
       throw new TokenRecusado('token sem `iat`');
     }
-    const email = payload['email'];
-    return {
-      sub,
-      emitidoEm: iat,
-      purpose: payload['purpose'],
-      ds_email: typeof email === 'string' ? email : null,
-    };
+    return { sub, iat };
   }
 }
