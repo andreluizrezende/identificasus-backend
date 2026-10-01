@@ -1,5 +1,7 @@
 # IdentificaSUS — backend
 
+[![CI](https://github.com/andreluizrezende/identificasus-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/andreluizrezende/identificasus-backend/actions/workflows/ci.yml)
+
 API do Núcleo de Resolução de Identidade. Recebe a captura vinda do campo,
 mantém o caso, a trilha de auditoria e as integrações.
 
@@ -39,9 +41,33 @@ Documentação da API em `http://localhost:3000/api/docs` (só fora de produçã
 | `npm run lint` | ESLint |
 | `npm run lint:arquitetura` | fronteiras de módulo (dependency-cruiser) |
 | `npm test` | testes de unidade |
-| `npm run test:banco` | testes contra o MySQL de verdade (precisa do `dbsamu`) |
+| `npm run test:banco` | testes contra o MySQL de verdade (precisa do `dbsamu`; roda no CI) |
 | `npm run criar-administrador` | cria usuário em `mob_usuario`, com finalidade e senha |
 | `npm run semear-ambiente-local` | usuário de teste com senha conhecida (só desenvolvimento) |
+
+## CI
+
+`.github/workflows/ci.yml` roda a cada push na `main` e em todo pull request,
+num runner `ubuntu-24.04` com o Node do `.nvmrc`. São dois jobs:
+
+| Job | O que roda |
+|---|---|
+| `build-test` | typecheck, lint, lint de arquitetura, testes de unidade e build |
+| `banco` | sobe um MySQL 8.4 como serviço, aplica os scripts de `db/` e roda `npm run test:banco` |
+
+O job `banco` é o que prova que os grants do ADR-14 bastam: os serviços rodam
+como `nri_assistencial`, e uma tabela esquecida num `GRANT` aparece como falha
+de teste. Ele usa a mesma versão de MySQL do `docker-compose.yml`, e não o
+MariaDB que às vezes ocupa a porta 3306 em máquina de desenvolvimento. Os dois
+já divergiram neste projeto (ver `PENDENCIAS.md`).
+
+A ordem dos scripts de `db/` no job está comentada no workflow. O `02` roda duas
+vezes, porque ele dá grant em objetos criados no `03` e no `05`, enquanto o
+`05` e o `06` dão grant a usuários criados no `02`. A última passada, sem
+`--force`, tem de aplicar todos os grants.
+
+O runner fica fixo em `ubuntu-24.04`, e não em `ubuntu-latest`, de propósito:
+trocar a versão do sistema é um commit, com o CI mostrando o que quebra.
 
 ## Ambiente de ponta a ponta, do zero
 
