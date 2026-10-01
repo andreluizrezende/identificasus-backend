@@ -32,15 +32,23 @@ aparelho cadastrado, então ninguém consegue entrar até alguém cadastrar um e
 `CREATE USER` e `GRANT OPTION`), aplicar os grants de `db/02`, `db/05` e
 `db/06`, e trocar as variáveis da Vercel para um usuário por finalidade.
 
-## `npm run test:banco` não roda nesta máquina
+## `npm run test:banco` só roda no CI, não nesta máquina
 
-**Situação (checada em 2026-09-10):**
+**Situação (atualizada em 2026-10-01):** desde o commit `8b24a40`, o job
+`banco` do CI (`.github/workflows/ci.yml`) sobe um MySQL 8.4, aplica os scripts
+de `db/` e roda `test:banco` a cada push na `main` e em todo pull request. A
+primeira execução passou com os 14 testes (sincronização, recuperação de senha
+e cadeia de auditoria). A cobertura existe; o que falta é rodar localmente,
+antes do push.
+
+Nesta máquina continua sem rodar (checado em 2026-09-10):
 
 - Docker não está instalado (`docker: command not found`), então o serviço
   `mysql` do `docker-compose.yml` nunca foi de fato subido aqui.
-- A porta `3306` já está ocupada por **outro** MySQL, rodando fora de Docker,
-  alheio a este projeto — ele não tem o usuário `nri_migracao` (nem os demais
-  `nri_*`) com a senha esperada (`trocar`):
+- A porta `3306` já está ocupada por **outro** banco, rodando fora de Docker,
+  alheio a este projeto. É um **MariaDB 10.4**, e não MySQL (confirmado em
+  2026-10-01). Ele não tem o usuário `nri_migracao` (nem os demais `nri_*`)
+  com a senha esperada (`trocar`):
 
   ```
   Error: Access denied for user 'nri_migracao'@'localhost' (using password: YES)
@@ -55,9 +63,12 @@ os usuários por finalidade do ADR-14 (`nri_migracao`, `nri_assistencial`,
 1. **Instalar Docker** e subir o `mysql` do `docker-compose.yml` do projeto
    (isolado do MySQL que já ocupa a `3306` — ajustar a porta exposta ou parar
    o outro serviço primeiro).
-2. **Usar o MySQL local existente**: aplicar os scripts de `db/` nele e criar
+2. **Usar o MariaDB local existente**: aplicar os scripts de `db/` nele e criar
    os usuários `nri_migracao`, `nri_assistencial`, `nri_auditoria` com os
-   grants do ADR-14.
+   grants do ADR-14. Cuidado: passar no MariaDB não prova o mesmo que passar no
+   MySQL 8 do CI e da produção — os dois já divergiram antes neste projeto
+   (`CAST(? AS JSON)`, ver o histórico do git).
 
 Depois de qualquer uma das duas, `npm run test:banco` (ou
-`npx vitest run --config vitest.banco.config.ts`) deve passar.
+`npx vitest run --config vitest.banco.config.ts`) deve passar. Enquanto isso,
+o CI é a fonte da verdade para estes testes.
