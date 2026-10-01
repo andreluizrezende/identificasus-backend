@@ -1,5 +1,35 @@
 # Pendências
 
+## Trocar duas senhas de produção expostas
+
+**Situação (2026-10-01):** as senhas abaixo foram coladas em texto puro numa
+sessão de assistente de código, durante a montagem da produção. Devem ser
+tratadas como vazadas. Nenhuma delas está neste repositório.
+
+| Credencial | Onde trocar | Depois de trocar, atualizar |
+|---|---|---|
+| Senha do `usr_samu` (MySQL `dbsamu` na CloudClusters) | painel da CloudClusters | `DATABASE_URL`, `DATABASE_URL_AUDITORIA`, `DATABASE_URL_PESQUISA` e `DATABASE_URL_ADMINISTRACAO` em Production na Vercel |
+| Senha da caixa `suporte@cicatribio.com.br` (SMTP) | painel de e-mail da Hostinger | `SMTP_PASS` em Production na Vercel |
+
+**Ordem para não derrubar a produção:**
+
+1. Trocar a senha no provedor.
+2. Atualizar as variáveis na Vercel. A senha do banco vai na URL e precisa ser
+   codificada para URL; caracteres como `#`, `%`, `$` e `&` quebram a conexão
+   se forem colados crus.
+3. Fazer o redeploy da produção: variável nova só vale depois dele.
+4. Conferir: o login com um aparelho cadastrado deve responder 401 para uma
+   senha errada (e não 500), e "perdi minha senha" deve entregar o e-mail.
+
+Entre os passos 1 e 3, a API fica sem banco ou sem e-mail. Vale fazer fora do
+horário de uso.
+
+Os scripts `scripts/*-producao.ps1` pedem a senha do banco na hora, então não
+precisam de mudança.
+
+`JWT_SEGREDO` não precisa ser trocado: foi gerado e gravado direto na Vercel,
+sem passar pela conversa.
+
 ## Produção sem separação por finalidade (ADR-14)
 
 **Situação (2026-10-01):** a base de produção é um MySQL 8.0.26 gerenciado na
