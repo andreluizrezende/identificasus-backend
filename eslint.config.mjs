@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   // api/: ponte CommonJS para a Vercel, fora de src/ e do dialeto TS do resto
   // do projeto — mesmo motivo de *.cjs ja ficar de fora.
-  { ignores: ['dist', 'coverage', '*.cjs', 'prisma/generated', 'api'] },
+  { ignores: ['dist', 'coverage', '**/*.cjs', 'prisma/generated', 'api'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

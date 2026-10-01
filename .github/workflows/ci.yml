@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run lint:arquitetura
+      - run: npm run test
+      - run: npm run build
+
+  # Testes contra o MySQL de verdade (test/banco). Sao os que provam que os
+  # grants do ADR-14 bastam: os servicos rodam como nri_assistencial, e uma
+  # tabela esquecida no GRANT aparece aqui, e nao em producao.
+  banco:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        # Mesma versao do docker-compose.yml.
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: raiz
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -praiz"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      MYSQL_PWD: raiz
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # (!) A ORDEM E O --force SAO DE PROPOSITO. 02 da grant em objetos que so
+      #     nascem em 03 e 05; 05 e 06 dao grant a usuarios que so nascem em 02.
+      #     A primeira passada de 02 (--force) so serve para criar os usuarios;
+      #     a ultima, sem --force, precisa passar inteira: e ela que prova que
+      #     todos os grants do ADR-14 aplicam.
+      - name: Esquema e usuarios por finalidade
+        run: |
+          banco() { mysql -h 127.0.0.1 -uroot "$@"; }
+          banco < db/01_estrutura.sql
+          banco < db/03_recuperacao_de_senha.sql
+          banco --force < db/02_usuarios_por_finalidade.sql 2>/dev/null || true
+          banco < db/05_cadeia_de_auditoria.sql
+          banco < db/06_credencial_local.sql
+          banco < db/02_usuarios_por_finalidade.sql
+
+      - run: npm run test:banco
