@@ -1,5 +1,37 @@
 # Pendências
 
+## Produção sem separação por finalidade (ADR-14)
+
+**Situação (2026-10-01):** a base de produção é um MySQL 8.0.26 gerenciado na
+CloudClusters (`dbsamu`). O único usuário disponível, `usr_samu`, tem
+`ALL PRIVILEGES` em `dbsamu.*`, mas não tem `CREATE USER` nem `GRANT OPTION`.
+Por isso `db/02_usuarios_por_finalidade.sql` não foi aplicado, e as quatro
+variáveis de produção na Vercel (`DATABASE_URL`, `DATABASE_URL_AUDITORIA`,
+`DATABASE_URL_PESQUISA`, `DATABASE_URL_ADMINISTRACAO`) apontam para o mesmo
+`usr_samu`.
+
+O que deixa de valer em produção enquanto isso não for resolvido:
+
+- **"Quem é vigiado pela trilha não lê a trilha."** O pool assistencial pode
+  ler `mob_auditoria`. Os gatilhos continuam barrando `UPDATE` e `DELETE`, mas
+  o `usr_samu` pode removê-los.
+- **Pesquisa só nas views.** O pool de pesquisa enxerga as tabelas base.
+- **Grants por coluna em `mob_usuario`.** A aplicação pode alterar qualquer
+  coluna, inclusive CPF, finalidade e `st_ativo`.
+
+O que continua valendo: o `FinalidadeGuard` (a rota exige a finalidade do
+token) e a escolha do pool por finalidade no código.
+
+Aplicado em produção: `db/01`, `03`, `05` e `06`, sem os `CREATE USER`,
+`GRANT` e `FLUSH PRIVILEGES`. `db/04_homologacao.sql` não foi aplicado: não há
+aparelho cadastrado, então ninguém consegue entrar até alguém cadastrar um em
+`mob_dispositivo`.
+
+**Para resolver:** criar `nri_assistencial`, `nri_auditoria`, `nri_pesquisa` e
+`nri_administracao` (pelo painel da CloudClusters ou com um usuário que tenha
+`CREATE USER` e `GRANT OPTION`), aplicar os grants de `db/02`, `db/05` e
+`db/06`, e trocar as variáveis da Vercel para um usuário por finalidade.
+
 ## `npm run test:banco` não roda nesta máquina
 
 **Situação (checada em 2026-09-10):**
