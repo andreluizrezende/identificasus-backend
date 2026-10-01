@@ -109,10 +109,16 @@ export class Credencial {
           );
         }
 
+        // (!) UTC_TIMESTAMP, NUNCA NOW. A coluna e lida como UTC (ver
+        //     acesso/credencial-alterada.ts), e NOW segue o fuso do servidor de
+        //     banco. Num banco em America/Sao_Paulo, NOW gravava a troca 3 h no
+        //     passado, antes do login, e a troca de senha deixava de derrubar
+        //     as sessoes abertas, sem erro nenhum. O teste de banco pegou isso
+        //     rodando contra um MariaDB local nesse fuso.
         await executar(
           `UPDATE mob_usuario
               SET ds_senha_hash = ?,
-                  st_credenciais_alteradas = NOW(6),
+                  st_credenciais_alteradas = UTC_TIMESTAMP(6),
                   qt_falhas_login = 0,
                   st_bloqueio_ate = NULL
             WHERE id_usuario = ?`,

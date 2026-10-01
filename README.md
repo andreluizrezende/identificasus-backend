@@ -41,7 +41,7 @@ Documentação da API em `http://localhost:3000/api/docs` (só fora de produçã
 | `npm run lint` | ESLint |
 | `npm run lint:arquitetura` | fronteiras de módulo (dependency-cruiser) |
 | `npm test` | testes de unidade |
-| `npm run test:banco` | testes contra o MySQL de verdade (precisa do `dbsamu`; roda no CI) |
+| `npm run test:banco` | testes contra o banco de verdade (precisa do `dbsamu` e dos usuários `nri_*`; roda também no CI) |
 | `npm run criar-administrador` | cria usuário em `mob_usuario`, com finalidade e senha |
 | `npm run semear-ambiente-local` | usuário de teste com senha conhecida (só desenvolvimento) |
 | `npm run db:historico` | aplica `db/07_historico_de_senhas.sql` (banco local) |
@@ -200,7 +200,7 @@ diferentes e a cadeia fica inverificável. No banco, dois gatilhos recusam
 `ZodValidacaoPipe` é o que impede um payload malformado de virar objeto de
 domínio.
 
-## Dois defeitos que os testes de banco encontraram
+## Três defeitos que os testes de banco encontraram
 
 Vale registrar, porque nenhum dos dois aparece em teste de unidade — os dois
 eram *grants* faltando, e um deles falhava em silêncio.
@@ -213,6 +213,14 @@ eram *grants* faltando, e um deles falhava em silêncio.
    "senha redefinida" mesmo assim. Resolvido com um grant **por coluna**
    (`db/02`): a aplicação carimba a data e continua sem poder mexer em CPF,
    nome, e-mail ou `st_ativo`.
+3. **A troca de senha não derrubava sessões num banco fora de UTC.**
+   `st_credenciais_alteradas` era gravada com `NOW(6)`, que segue o fuso do
+   servidor de banco, e lida como UTC. Num banco em `America/Sao_Paulo`, a
+   troca ficava registrada 3 horas antes do login, e as sessões abertas com a
+   senha velha continuavam valendo. No CI e na produção atual, em UTC, passava
+   por coincidência. Apareceu rodando `test:banco` contra o MariaDB local.
+   Resolvido gravando com `UTC_TIMESTAMP(6)`. Vale como regra: data que o
+   código compara como UTC se grava com `UTC_TIMESTAMP`, nunca com `NOW`.
 
 ## Pendências
 

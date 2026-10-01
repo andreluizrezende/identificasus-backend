@@ -144,7 +144,7 @@ async function principal(): Promise<void> {
            ds_email = VALUES(ds_email),
            ds_senha_hash = VALUES(ds_senha_hash),
            co_finalidade = VALUES(co_finalidade),
-           st_credenciais_alteradas = CURRENT_TIMESTAMP(6),
+           st_credenciais_alteradas = UTC_TIMESTAMP(6),
            qt_falhas_login = 0,
            st_bloqueio_ate = NULL,
            st_ativo = 'A'`,

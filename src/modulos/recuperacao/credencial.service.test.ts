@@ -31,7 +31,7 @@ function montar(opts: { atual?: string | null; anteriores?: string[]; falha?: Er
       estado.historico.push({ id_senha_historico: proximoId++, ds_senha_hash: String(p[1]) });
     } else if (sql.includes('UPDATE mob_usuario')) {
       estado.atual = String(p[0]);
-      estado.carimbou = sql.includes('st_credenciais_alteradas = NOW(6)') && sql.includes('qt_falhas_login = 0');
+      estado.carimbou = sql.includes('st_credenciais_alteradas = UTC_TIMESTAMP(6)') && sql.includes('qt_falhas_login = 0');
     } else if (sql.includes('DELETE FROM mob_senha_historico')) {
       estado.historico = estado.historico.filter((l) => !p.includes(l.id_senha_historico));
     }
