@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, HttpCode, HttpException, HttpStatus, Post, Req, UsePipes,
+  Body, Controller, Delete, HttpCode, HttpException, HttpStatus, Logger, Post, Req, UsePipes,
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ExigeFinalidade } from '@/acesso/finalidade.decorator';
@@ -22,6 +22,8 @@ interface RequisicaoDoCampo {
 @ApiTags('sessao')
 @Controller('sessao')
 export class SessaoController {
+  private readonly log = new Logger('sessao');
+
   constructor(private readonly servico: SessaoService) {}
 
   @Post()
@@ -125,6 +127,15 @@ export class SessaoController {
         HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
+    // (!) O ERRO INESPERADO VAI PARA O LOG. Sem isto, uma falha de conexao com o
+    //     banco virava um 500 generico sem rastro nenhum, e a causa (senha,
+    //     URL, rede) so aparecia por tentativa. Vai so o codigo e a mensagem do
+    //     erro: as do mysql2 nunca trazem a senha.
+    const codigo = (erro as { code?: unknown } | null)?.code;
+    this.log.error(
+      `erro inesperado na sessao: ${typeof codigo === 'string' ? `${codigo} ` : ''}`
+        + (erro instanceof Error ? erro.message : String(erro)),
+    );
     return new HttpException(
       {
         sucesso: false,
