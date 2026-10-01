@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { opcoesDeCors } from './comum/cors';
 
 /**
  * Montagem do app, compartilhada entre o processo tradicional (`main.ts`,
@@ -15,6 +16,9 @@ export async function criarApp(): Promise<INestApplication> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
   app.use(helmet());
+  // So com CORS_ORIGENS declarada: hoje, a origem do APK (ver comum/cors.ts).
+  const cors = opcoesDeCors(process.env.CORS_ORIGENS);
+  if (cors) app.enableCors(cors);
   app.setGlobalPrefix('api');
   // (!) SEM ValidationPipe GLOBAL. Ele e do mundo class-validator/DTO com
   //     decorators, e este projeto valida com Zod em cada fronteira
