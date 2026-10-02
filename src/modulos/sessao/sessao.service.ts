@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
+import { chaveDaFila } from '@/acesso/chave-da-fila';
 import { credencialMudouDepoisDoToken } from '@/acesso/credencial-alterada';
 import { conferirSenha } from '@/acesso/senha';
 import {
@@ -125,6 +126,8 @@ export class SessaoService {
     const coSessao = randomUUID();
     const expiraEm = new Date(Date.now() + HORAS_DE_SESSAO * 3600 * 1000);
     const tokens = await this.emitir(usuario, coSessao);
+    // Antes de gravar a sessao: se a chave falhar, nada fica pela metade.
+    const chaveFila = this.chaveFilaDe(usuario, dispositivo.co_dispositivo);
 
     await this.acesso.executar(
       'ASSISTENCIAL',
@@ -159,6 +162,8 @@ export class SessaoService {
         id_base: dispositivo.id_base,
         no_base: dispositivo.no_base,
       },
+      // O console da regulação não tem fila local e não recebe chave nenhuma.
+      ...(chaveFila ? { chaveFila } : {}),
     };
   }
 
@@ -337,6 +342,18 @@ export class SessaoService {
       'UPDATE mob_usuario SET qt_falhas_login = 0, st_bloqueio_ate = NULL WHERE id_usuario = ?',
       [idUsuario],
     );
+  }
+
+  /** Só quem captura em campo guarda dado no aparelho (ver `acesso/chave-da-fila.ts`). */
+  private chaveFilaDe(usuario: LinhaUsuario, coDispositivo: string): string | null {
+    if (usuario.co_finalidade !== 'ASSISTENCIAL') return null;
+    try {
+      return chaveDaFila(usuario.id_usuario, coDispositivo);
+    } catch (erro) {
+      const mensagem = erro instanceof Error ? erro.message : String(erro);
+      this.log.error(mensagem);
+      throw new AutenticacaoIndisponivel(mensagem);
+    }
   }
 
   private async emitir(usuario: LinhaUsuario, coSessao: string): Promise<TokensEmitidos> {

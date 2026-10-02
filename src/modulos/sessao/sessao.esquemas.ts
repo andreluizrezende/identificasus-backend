@@ -53,4 +53,10 @@ export interface SessaoAberta {
     id_base: number;
     no_base: string;
   };
+  /**
+   * Chave da fila local (base64, 256 bits), a mesma em todo login desta
+   * pessoa neste aparelho. Só para a finalidade ASSISTENCIAL: é a única que
+   * guarda dado no aparelho. Ver `acesso/chave-da-fila.ts`.
+   */
+  chaveFila?: string;
 }

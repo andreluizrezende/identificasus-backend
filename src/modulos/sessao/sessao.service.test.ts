@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AutenticacaoIndisponivel, CredencialRecusada, DispositivoNaoAutorizado, SessaoEncerrada,
   SessaoService,
@@ -16,8 +16,14 @@ import type { TokenService } from '@/acesso/token.service';
  */
 vi.mock('@/acesso/senha', () => ({ conferirSenha: vi.fn() }));
 
+// O token é simulado, mas a chave da fila deriva do segredo de verdade.
+const SEGREDO_ANTES = process.env.JWT_SEGREDO;
+beforeEach(() => {
+  process.env.JWT_SEGREDO = 'segredo-de-teste-com-pelo-menos-trinta-e-dois-bytes';
+});
 afterEach(() => {
   vi.mocked(conferirSenha).mockReset();
+  process.env.JWT_SEGREDO = SEGREDO_ANTES;
 });
 
 const DISPOSITIVO = { id_dispositivo: 1, co_dispositivo: 'D1', id_base: 2, no_base: 'Base 1' };
@@ -120,6 +126,29 @@ describe('entrar', () => {
     });
     expect(executar).toHaveBeenCalledTimes(1); // grava a sessao
     expect(auditoria.registrar).toHaveBeenCalledTimes(1);
+  });
+
+  describe('chave da fila local', () => {
+    it('(!) conta de campo recebe a mesma chave em dois logins seguidos (sessoes diferentes)', async () => {
+      const primeiro = await montar({}).servico.entrar(ENTRADA, '1.2.3.4');
+      const segundo = await montar({}).servico.entrar(ENTRADA, '1.2.3.4');
+      expect(primeiro.coSessao).not.toBe(segundo.coSessao);
+      expect(primeiro.chaveFila).toBeTruthy();
+      expect(segundo.chaveFila).toBe(primeiro.chaveFila);
+    });
+
+    it('conta da regulacao nao recebe chave: o console nao guarda nada no aparelho', async () => {
+      const { servico } = montar({ usuarioLinhas: [{ ...USUARIO, co_finalidade: 'ADJUDICACAO' }] });
+      const r = await servico.entrar(ENTRADA, '1.2.3.4');
+      expect(r).not.toHaveProperty('chaveFila');
+    });
+
+    it('sem segredo para a chave: recusa antes de gravar a sessao', async () => {
+      delete process.env.JWT_SEGREDO;
+      const { servico, executar } = montar({});
+      await expect(servico.entrar(ENTRADA, '1.2.3.4')).rejects.toBeInstanceOf(AutenticacaoIndisponivel);
+      expect(executar).not.toHaveBeenCalled();
+    });
   });
 });
 
