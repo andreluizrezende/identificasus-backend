@@ -53,6 +53,7 @@ Documentação da API em `http://localhost:3000/api/docs` (só fora de produçã
 | `npm run db:historico` | aplica `db/07_historico_de_senhas.sql` (banco local) |
 | `npm run db:adjudicacao` | aplica `db/08_finalidade_adjudicacao.sql` (banco local) |
 | `npm run db:fila-e-trilha` | aplica `db/09_fila_e_trilha.sql` (banco local) |
+| `npm run db:valor-tipado` | aplica `db/10_valor_tipado_e_historico.sql` (banco local) |
 
 ## CI
 
@@ -191,7 +192,8 @@ db/
 ├── 06_credencial_local.sql        senha, finalidade e freio em mob_usuario
 ├── 07_historico_de_senhas.sql     as 2 senhas anteriores, para não repetir
 ├── 08_finalidade_adjudicacao.sql  finalidade da regulação: CHECKs e grants só de leitura
-└── 09_fila_e_trilha.sql           fechar a captura põe o caso na fila; histórico sem duplicata; trilha verificável pelo conteúdo
+├── 09_fila_e_trilha.sql           fechar a captura põe o caso na fila; histórico sem duplicata; trilha verificável pelo conteúdo
+└── 10_valor_tipado_e_historico.sql número e data gravados no tipo certo; limpa o histórico duplicado
 test/banco/                        testes contra o MySQL de verdade
 ```
 
