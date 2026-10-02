@@ -25,6 +25,7 @@
     "db:fila-e-trilha": "mysql --defaults-group-suffix=identificasus < db/09_fila_e_trilha.sql",
     "db:valor-tipado": "mysql --defaults-group-suffix=identificasus < db/10_valor_tipado_e_historico.sql",
     "db:decisao": "mysql --defaults-group-suffix=identificasus < db/11_decisao_e_fotos_da_regulacao.sql",
+    "db:cadastro": "mysql --defaults-group-suffix=identificasus < db/12_cadastro_pela_tela.sql",
     "db:usuarios": "mysql --defaults-group-suffix=identificasus < db/02_usuarios_por_finalidade.sql",
     "criar-administrador": "node --import tsx scripts/criar-administrador.ts",
     "test:banco": "vitest run --config vitest.banco.config.ts",

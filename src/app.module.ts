@@ -5,6 +5,7 @@ import { AcessoModule } from './acesso/acesso.module';
 import { AutenticacaoGuard } from './acesso/autenticacao.guard';
 import { FinalidadeGuard } from './acesso/finalidade.guard';
 import { FiltroExcecao } from './comum/filtro-excecao';
+import { AdministracaoModule } from './modulos/administracao/administracao.module';
 import { AuditoriaModule } from './modulos/auditoria/auditoria.module';
 import { CapturaModule } from './modulos/captura/captura.module';
 import { CasoModule } from './modulos/caso/caso.module';
@@ -33,6 +34,7 @@ import { TurnoModule } from './modulos/turno/turno.module';
     MidiaModule,
     RecuperacaoModule,
     RegulacaoModule,
+    AdministracaoModule,
     SessaoModule,
   ],
   providers: [

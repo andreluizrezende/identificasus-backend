@@ -110,6 +110,18 @@ Servem para testar (`APAR-HOM-0001` no tablet, `APAR-HOM-0005` na estação da
 regulação; `APAR-HOM-9999` é revogado de propósito). As contas de teste se
 criam com `scripts/criar-contas-de-teste-producao.ps1`.
 
+**Cadastro pela tela (US-34) pronto; falta a primeira conta de administração
+em produção.** A área "Administração" do console cadastra profissionais (sem
+senha: cada pessoa define a dela em "Primeiro acesso") e autoriza ou revoga
+aparelhos. Ela só abre para conta de finalidade `ADMINISTRACAO`, e a primeira
+se cria com `scripts/criar-usuario-producao.ps1` (finalidade `ADMINISTRACAO`;
+você digita a senha). Depois disso, as próximas contas saem pela tela.
+
+**Banco local:** `db/11` e `db/12` só têm grants, e o `nri_migracao` não pode
+dá-los. Rode `npm run db:decisao` e `npm run db:cadastro` como root do MySQL;
+sem eles, a decisão do caso e a troca de perfis falham localmente (em produção
+tudo roda como `usr_samu`, e nada muda).
+
 **Lista oficial: o importador está pronto; falta a planilha da SMS.** O que
 pedir e como carregar está em `cadastro-sms/README.md` (modelos em
 `cadastro-sms/modelo/`). O `scripts/importar-cadastro-sms-producao.ps1` confere

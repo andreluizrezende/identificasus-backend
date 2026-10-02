@@ -40,6 +40,10 @@ export const URL_AUDITORIA_TESTE =
   process.env.DATABASE_URL_AUDITORIA_TESTE ??
   'mysql://nri_auditoria:trocar@127.0.0.1:3306/dbsamu';
 
+export const URL_ADMINISTRACAO_TESTE =
+  process.env.DATABASE_URL_ADMINISTRACAO_TESTE ??
+  'mysql://nri_administracao:trocar@127.0.0.1:3306/dbsamu';
+
 /** Só para montar e desmontar cenário. Nunca usada por um serviço. */
 export const URL_ADMIN_TESTE =
   process.env.DATABASE_URL_ADMIN_TESTE ??
@@ -52,6 +56,7 @@ export function acessoDeTeste(): BancoPorFinalidade {
       if (chave === 'DATABASE_URL_AUDITORIA') return URL_AUDITORIA_TESTE;
       if (chave === 'DATABASE_URL_PESQUISA') return URL_AUDITORIA_TESTE;
       if (chave === 'DATABASE_URL_ADJUDICACAO') return URL_ADJUDICACAO_TESTE;
+      if (chave === 'DATABASE_URL_ADMINISTRACAO') return URL_ADMINISTRACAO_TESTE;
       if (chave.startsWith('DATABASE_URL')) return URL_TESTE;
       return process.env[chave];
     },

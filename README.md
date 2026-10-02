@@ -10,6 +10,7 @@ Central de Regulação.
 |---|---|---|
 | `identificasus-app` (campo) | `ASSISTENCIAL` | sessão, turno, catálogo, caso, captura, sincronização, mídia |
 | `identificasus-web` (regulação) | `ADJUDICACAO` | sessão, `regulacao/fila`, `regulacao/casos/:coCaso`, `.../fotos`, `.../decisao` |
+| `identificasus-web` (administração) | `ADMINISTRACAO` | sessão, `admin/referencias`, `admin/profissionais`, `admin/aparelhos` (cadastro sem senha; revogar) |
 
 **O sistema sugere; a decisão é humana.** Nenhum caminho de código deste serviço
 cria vínculo sem duas conferências independentes.
@@ -54,6 +55,8 @@ Documentação da API em `http://localhost:3000/api/docs` (só fora de produçã
 | `npm run db:adjudicacao` | aplica `db/08_finalidade_adjudicacao.sql` (banco local) |
 | `npm run db:fila-e-trilha` | aplica `db/09_fila_e_trilha.sql` (banco local) |
 | `npm run db:valor-tipado` | aplica `db/10_valor_tipado_e_historico.sql` (banco local) |
+| `npm run db:decisao` | aplica `db/11_decisao_e_fotos_da_regulacao.sql` (grants do `nri_adjudicacao`; banco local, como root) |
+| `npm run db:cadastro` | aplica `db/12_cadastro_pela_tela.sql` (DELETE de perfil para o `nri_administracao`; banco local, como root) |
 
 ## CI
 
@@ -182,6 +185,7 @@ src/
     ├── midia/          token de upload direto pro Vercel Blob (identificasus-fotos)
     ├── recuperacao/    "perdi minha senha"
     ├── regulacao/      fila, detalhe, fotos e decisão do caso para o console (ADJUDICACAO)
+    ├── administracao/  cadastro de profissionais, aparelhos e estações (ADMINISTRACAO)
     └── auditoria/      trilha encadeada (módulo-folha)
 db/
 ├── 01_estrutura.sql               DDL do dbsamu (20 tabelas)
