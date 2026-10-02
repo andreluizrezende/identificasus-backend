@@ -96,13 +96,28 @@ O que deixa de valer em produção enquanto isso não for resolvido:
 O que continua valendo: o `FinalidadeGuard` (a rota exige a finalidade do
 token) e a escolha do pool por finalidade no código.
 
-Aplicado em produção: `db/01`, `03`, `05` e `06`, sem os `CREATE USER`,
+Aplicado em produção: `db/01`, `03`, `05`, `06` e `07`, sem os `CREATE USER`,
 `GRANT` e `FLUSH PRIVILEGES`. `db/04_homologacao.sql` não foi aplicado: não há
 aparelho cadastrado, então ninguém consegue entrar até alguém cadastrar um em
 `mob_dispositivo`.
 
-**Para resolver:** criar `nri_assistencial`, `nri_auditoria`, `nri_pesquisa` e
-`nri_administracao` (pelo painel da CloudClusters ou com um usuário que tenha
-`CREATE USER` e `GRANT OPTION`), aplicar os grants de `db/02`, `db/05`,
-`db/06` e `db/07`, e trocar as variáveis da Vercel para um usuário por
+**Falta aplicar em produção: `db/08` e `db/09`, nesta ordem, e antes do deploy
+do backend.** Sem a `db/08`, quem entrar no console da regulação com finalidade
+`ADJUDICACAO` não deixa rastro: `mob_auditoria` recusa a finalidade e a trilha
+perde a consulta, sem erro para quem consultou. Sem a `db/09`, o backend novo
+grava a transição de estado sem autor (o gatilho antigo não lê as variáveis
+de sessão) e falha ao gravar a trilha (coluna `co_elo`). Aplicar com
+`scripts/aplicar-migracao-producao.ps1`, que pula os `GRANT` (em produção tudo
+roda como `usr_samu`); a `db/09` não usa `DELIMITER` justamente para passar por
+esse script.
+
+**Verificação noturna da trilha:** criar a variável `CRON_SECRET` em Production
+na Vercel (comando para gerar em `.env.example`). Sem ela, o agendamento de
+`vercel.json` chama `/api/auditoria/verificacao` e recebe 503. O resultado sai
+no log da função: "trilha integra" ou "TRILHA QUEBRADA no id_auditoria N".
+
+**Para resolver:** criar `nri_assistencial`, `nri_auditoria`, `nri_pesquisa`,
+`nri_administracao` e `nri_adjudicacao` (pelo painel da CloudClusters ou com
+um usuário que tenha `CREATE USER` e `GRANT OPTION`), aplicar os grants de `db/02`, `db/05`,
+`db/06`, `db/07` e `db/08`, e trocar as variáveis da Vercel para um usuário por
 finalidade.

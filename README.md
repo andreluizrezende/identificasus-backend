@@ -3,7 +3,13 @@
 [![CI](https://github.com/andreluizrezende/identificasus-backend/actions/workflows/ci.yml/badge.svg)](https://github.com/andreluizrezende/identificasus-backend/actions/workflows/ci.yml)
 
 API do Núcleo de Resolução de Identidade. Recebe a captura vinda do campo,
-mantém o caso, a trilha de auditoria e as integrações.
+mantém o caso, a trilha de auditoria e as integrações, e serve o console da
+Central de Regulação.
+
+| Cliente | Finalidade | Rotas |
+|---|---|---|
+| `identificasus-app` (campo) | `ASSISTENCIAL` | sessão, turno, catálogo, caso, captura, sincronização, mídia |
+| `identificasus-web` (regulação) | `ADJUDICACAO` | sessão, `regulacao/fila`, `regulacao/casos/:coCaso` |
 
 **O sistema sugere; a decisão é humana.** Nenhum caminho de código deste serviço
 cria vínculo sem duas conferências independentes.
@@ -43,8 +49,10 @@ Documentação da API em `http://localhost:3000/api/docs` (só fora de produçã
 | `npm test` | testes de unidade |
 | `npm run test:banco` | testes contra o banco de verdade (precisa do `dbsamu` e dos usuários `nri_*`; roda também no CI) |
 | `npm run criar-administrador` | cria usuário em `mob_usuario`, com finalidade e senha |
-| `npm run semear-ambiente-local` | usuário de teste com senha conhecida (só desenvolvimento) |
+| `npm run semear-ambiente-local` | duas contas de teste com senha conhecida, uma de campo e uma da regulação (só desenvolvimento) |
 | `npm run db:historico` | aplica `db/07_historico_de_senhas.sql` (banco local) |
+| `npm run db:adjudicacao` | aplica `db/08_finalidade_adjudicacao.sql` (banco local) |
+| `npm run db:fila-e-trilha` | aplica `db/09_fila_e_trilha.sql` (banco local) |
 
 ## CI
 
@@ -94,6 +102,11 @@ npm run dev
 cd ../identificasus-app && npm run dev
 ```
 
+Para o **console da regulação**, aplique também `npm run db:adjudicacao` (só na
+primeira vez), rode `npm run semear-ambiente-local` e suba
+`../identificasus-web` com `npm run dev`. A conta que entra lá é a de
+finalidade `ADJUDICACAO`; a de campo recebe 403 em toda rota da regulação.
+
 No passo 3, para testar a **captura em campo**, responda `ASSISTENCIAL` na
 pergunta da finalidade. Isso não é um detalhe de configuração:
 
@@ -134,6 +147,13 @@ arquitetura em `db/06_credencial_local.sql`.
   senha errada dão o mesmo 401, no mesmo tempo.
 - **Troca de senha** (recuperação ou `criar-administrador`) carimba
   `st_credenciais_alteradas`, o que derruba os tokens emitidos antes.
+- **Chave da fila local:** o login de uma conta `ASSISTENCIAL` devolve
+  `chaveFila`, 256 bits derivados por HKDF do `JWT_SEGREDO`, com a pessoa e o
+  aparelho no rótulo (`src/acesso/chave-da-fila.ts`). É a mesma em todo login,
+  então o que ficou na fila do aparelho volta a ser legível depois das 72 h ou
+  de uma troca de senha. O console da regulação não recebe. **Trocar o
+  `JWT_SEGREDO` deixa ilegível o que estiver parado nas filas**: faça a troca
+  com os aparelhos sincronizados.
 
 Contas que existiam antes da migração ficam sem senha. Para entrar, a pessoa usa
 o "perdi minha senha" ou alguém roda `npm run criar-administrador` com o mesmo
@@ -160,6 +180,7 @@ src/
     ├── sincronizacao/  lote idempotente vindo do aparelho
     ├── midia/          token de upload direto pro Vercel Blob (identificasus-fotos)
     ├── recuperacao/    "perdi minha senha"
+    ├── regulacao/      fila e detalhe do caso para o console (finalidade ADJUDICACAO)
     └── auditoria/      trilha encadeada (módulo-folha)
 db/
 ├── 01_estrutura.sql               DDL do dbsamu (20 tabelas)
@@ -168,7 +189,9 @@ db/
 ├── 04_homologacao.sql             base, viatura e aparelho para testar
 ├── 05_cadeia_de_auditoria.sql     sp_mob_ultimo_elo (ver abaixo)
 ├── 06_credencial_local.sql        senha, finalidade e freio em mob_usuario
-└── 07_historico_de_senhas.sql     as 2 senhas anteriores, para não repetir
+├── 07_historico_de_senhas.sql     as 2 senhas anteriores, para não repetir
+├── 08_finalidade_adjudicacao.sql  finalidade da regulação: CHECKs e grants só de leitura
+└── 09_fila_e_trilha.sql           fechar a captura põe o caso na fila; histórico sem duplicata; trilha verificável pelo conteúdo
 test/banco/                        testes contra o MySQL de verdade
 ```
 
@@ -191,6 +214,13 @@ quem chamou. Dar `SELECT` resolveria e destruiria a propriedade; calcular o
 hash em SQL criaria uma segunda implementação do mesmo algoritmo, e duas
 implementações de um hash divergem em silêncio.
 
+**A trilha é verificável pelo conteúdo, toda noite.** Cada elo grava o
+identificador que entra no hash (`co_elo`, `db/09`), e o hash cobre também
+aparelho e caso. `AuditoriaService.verificarCadeia` confere a ordem e recalcula
+o hash de cada elo a partir da própria linha; a Vercel chama
+`/api/auditoria/verificacao` às 06:00 UTC (`vercel.json`, protegida por
+`CRON_SECRET`). Elos anteriores à `db/09` são verificáveis só pela ordem.
+
 **A trilha de auditoria não se altera.** O encadeamento usa JSON canônico —
 chaves ordenadas, sem espaços — porque sem isso a mesma informação gera hashes
 diferentes e a cadeia fica inverificável. No banco, dois gatilhos recusam
@@ -200,10 +230,10 @@ diferentes e a cadeia fica inverificável. No banco, dois gatilhos recusam
 `ZodValidacaoPipe` é o que impede um payload malformado de virar objeto de
 domínio.
 
-## Três defeitos que os testes de banco encontraram
+## Quatro defeitos que os testes de banco encontraram
 
-Vale registrar, porque nenhum dos dois aparece em teste de unidade — os dois
-eram *grants* faltando, e um deles falhava em silêncio.
+Vale registrar, porque nenhum deles aparece em teste de unidade, e dois
+falhavam em silêncio.
 
 1. **A cadeia de auditoria não fechava.** O serviço lia o último elo com um
    `SELECT` em `mob_auditoria`, e `nri_assistencial` só tem `INSERT` ali.
@@ -221,11 +251,24 @@ eram *grants* faltando, e um deles falhava em silêncio.
    por coincidência. Apareceu rodando `test:banco` contra o MariaDB local.
    Resolvido gravando com `UTC_TIMESTAMP(6)`. Vale como regra: data que o
    código compara como UTC se grava com `UTC_TIMESTAMP`, nunca com `NOW`.
+4. **A trilha não registrava nada da regulação.** `ck_mob_auditoria_co_finalidade`
+   não aceitava `ADJUDICACAO`, e o `AuditoriaService`, que de propósito não
+   derruba a requisição por falha de trilha, só escrevia o erro no log. A fila
+   respondia normalmente e o teste passava. Apareceu no log do `test:banco`.
+   Resolvido em `db/08`, e o teste de banco da regulação agora conta as linhas
+   gravadas em `mob_auditoria` em vez de confiar no retorno. Vale como regra:
+   finalidade nova entra em **todos** os `CHECK` de `co_finalidade`
+   (`mob_usuario` e `mob_auditoria`).
 
 ## Pendências
 
 - Outbox transacional e publicação na RNDS.
-- Console da Central de Regulação: comparação, dupla conferência e adjudicação.
+- Console da Central de Regulação: fila e detalhe do caso prontos
+  (`regulacao/`). Falta comparação, dupla conferência e adjudicação, que
+  esperam a definição da **fonte de candidatos**: o `dbsamu` não tem tabela de
+  desaparecidos, registros hospitalares nem outra base contra a qual comparar.
+  As tabelas novas usam o prefixo `web_`, e os grants de escrita de
+  `nri_adjudicacao` vêm junto com elas.
 - Ponte pericial: propositalmente ausente. A regra
   `ponte-pericial-destacavel` já existe para que o build continue verde sem ela
   (RF-06.02).
