@@ -96,10 +96,16 @@ O que deixa de valer em produção enquanto isso não for resolvido:
 O que continua valendo: o `FinalidadeGuard` (a rota exige a finalidade do
 token) e a escolha do pool por finalidade no código.
 
-Aplicado em produção: `db/01`, `03`, `05`, `06`, `07`, `08`, `09` e `10` (as três últimas em 2026-10-02), sem os `CREATE USER`,
-`GRANT` e `FLUSH PRIVILEGES`. `db/04_homologacao.sql` não foi aplicado: não há
-aparelho cadastrado, então ninguém consegue entrar até alguém cadastrar um em
-`mob_dispositivo`.
+Aplicado em produção: `db/01`, `03`, `04`, `05`, `06`, `07`, `08`, `09` e `10`
+(`04`, `08`, `09` e `10` em 2026-10-02), sem os `CREATE USER`, `GRANT` e
+`FLUSH PRIVILEGES`.
+
+**Bases e aparelhos de produção são os de homologação (`db/04`), fictícios.**
+Servem para testar (`APAR-HOM-0001` no tablet, `APAR-HOM-0005` na estação da
+regulação; `APAR-HOM-9999` é revogado de propósito). Quando a SMS mandar a
+lista oficial de bases e aparelhos, cadastrar os reais e desativar os
+`*-HOM-*` (`st_ativo = 'I'`; não apagar: a trilha referencia aparelho). As
+contas de teste se criam com `scripts/criar-contas-de-teste-producao.ps1`.
 
 **Verificação noturna da trilha:** criar a variável `CRON_SECRET` em Production
 na Vercel (comando para gerar em `.env.example`). Sem ela, o agendamento de
