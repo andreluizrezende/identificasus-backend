@@ -107,10 +107,16 @@ Aplicado em produção: `db/01`, `03`, `04`, `05`, `06`, `07`, `08`, `09` e `10`
 
 **Bases e aparelhos de produção são os de homologação (`db/04`), fictícios.**
 Servem para testar (`APAR-HOM-0001` no tablet, `APAR-HOM-0005` na estação da
-regulação; `APAR-HOM-9999` é revogado de propósito). Quando a SMS mandar a
-lista oficial de bases e aparelhos, cadastrar os reais e desativar os
-`*-HOM-*` (`st_ativo = 'I'`; não apagar: a trilha referencia aparelho). As
-contas de teste se criam com `scripts/criar-contas-de-teste-producao.ps1`.
+regulação; `APAR-HOM-9999` é revogado de propósito). As contas de teste se
+criam com `scripts/criar-contas-de-teste-producao.ps1`.
+
+**Lista oficial: o importador está pronto; falta a planilha da SMS.** O que
+pedir e como carregar está em `cadastro-sms/README.md` (modelos em
+`cadastro-sms/modelo/`). O `scripts/importar-cadastro-sms-producao.ps1` confere
+as três planilhas, mostra o plano sem gravar, grava tudo ou nada com
+`-Aplicar` e, com `-AposentarHomologacao`, desativa os `*-HOM-*` sem apagá-los
+(a trilha e os casos de teste os referenciam). Aposentar tranca as contas de
+teste, que entram por `APAR-HOM-0001` e `APAR-HOM-0005`.
 
 **Verificação noturna da trilha:** `CRON_SECRET` criada em Production na Vercel
 em 2026-10-02, e a verificação respondeu "trilha integra". O agendamento de

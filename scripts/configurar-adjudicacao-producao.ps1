@@ -33,8 +33,26 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "Senha recusada pelo banco; nada foi gravado na Vercel." }
 
   Write-Host "`nGravando DATABASE_URL_ADJUDICACAO em Production..." -ForegroundColor Cyan
-  npx --yes vercel@62.1.0 env add DATABASE_URL_ADJUDICACAO production --sensitive --force --yes --value $url
-  if ($LASTEXITCODE -ne 0) { throw "A Vercel nao aceitou a variavel." }
+  # (!) A URL VAI PELA ENTRADA PADRAO, E NAO POR --value: argumento aparece na
+  #     lista de processos da maquina (regra de scripts/_terminal.ts).
+  # (!) SEM BOM. O .NET Framework abre a entrada do processo filho na
+  #     codificacao do console, e o UTF-8 padrao poe um BOM na frente: a Vercel
+  #     gravava um BOM antes de "mysql://...", e a conexao quebraria. Por isso o console
+  #     fica em UTF-8 sem BOM so durante o Start. (Testado com uma variavel de
+  #     mentira: o valor lido de volta e identico byte a byte.)
+  $psi = New-Object Diagnostics.ProcessStartInfo 'cmd.exe',
+    '/c npx --yes vercel@62.1.0 env add DATABASE_URL_ADJUDICACAO production --sensitive --force --yes'
+  $psi.RedirectStandardInput = $true
+  $psi.UseShellExecute = $false
+  $psi.WorkingDirectory = (Get-Location).Path
+  $codificacaoAntes = [Console]::InputEncoding
+  [Console]::InputEncoding = New-Object Text.UTF8Encoding $false
+  try { $processo = [Diagnostics.Process]::Start($psi) } finally { [Console]::InputEncoding = $codificacaoAntes }
+  $bytes = [Text.Encoding]::UTF8.GetBytes($url)
+  $processo.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+  $processo.StandardInput.BaseStream.Close()
+  $processo.WaitForExit()
+  if ($processo.ExitCode -ne 0) { throw "A Vercel nao aceitou a variavel." }
 
   Write-Host "`nRefazendo o deploy de producao (variavel nova so vale depois dele)..." -ForegroundColor Cyan
   npx --yes vercel@62.1.0 --prod --yes
