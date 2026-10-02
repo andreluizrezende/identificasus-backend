@@ -107,10 +107,17 @@ lista oficial de bases e aparelhos, cadastrar os reais e desativar os
 `*-HOM-*` (`st_ativo = 'I'`; não apagar: a trilha referencia aparelho). As
 contas de teste se criam com `scripts/criar-contas-de-teste-producao.ps1`.
 
-**Verificação noturna da trilha:** criar a variável `CRON_SECRET` em Production
-na Vercel (comando para gerar em `.env.example`). Sem ela, o agendamento de
-`vercel.json` chama `/api/auditoria/verificacao` e recebe 503. O resultado sai
-no log da função: "trilha integra" ou "TRILHA QUEBRADA no id_auditoria N".
+**Verificação noturna da trilha:** `CRON_SECRET` criada em Production na Vercel
+em 2026-10-02, e a verificação respondeu "trilha integra". O agendamento de
+`vercel.json` roda às 06:00 UTC; o resultado sai no log da função: "trilha
+integra" ou "TRILHA QUEBRADA no id_auditoria N". Sem a variável, a rota
+responde 503.
+
+**Fotos:** o store `identificasus-fotos` do Vercel Blob é **privado**. O app
+sobe com `access: 'private'` desde a versão 0.1.3; antes subia como público, o
+Blob recusava e nenhuma foto chegava. Ainda não há tela que mostre as fotos:
+quando houver (console da regulação), a leitura tem de passar pelo backend,
+que é quem tem o token do store.
 
 **Para resolver:** criar `nri_assistencial`, `nri_auditoria`, `nri_pesquisa`,
 `nri_administracao` e `nri_adjudicacao` (pelo painel da CloudClusters ou com
