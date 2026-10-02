@@ -121,6 +121,7 @@ describe('entrar', () => {
     expect(r.expiraEmSegundos).toBe(900);
     expect(r.usuario).toEqual({ id: 5, no_usuario: 'Ana', ds_email: 'ana@x.br', perfis: ['CAMPO'] });
     expect(r.dispositivo).toEqual({ co_dispositivo: 'D1', id_base: 2, no_base: 'Base 1' });
+    expect(r.finalidade).toBe('ASSISTENCIAL');
     expect(emitir).toHaveBeenCalledWith({
       idUsuario: 5, finalidade: 'ASSISTENCIAL', dsEmail: 'ana@x.br', coSessao: r.coSessao,
     });

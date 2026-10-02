@@ -151,6 +151,7 @@ export class SessaoService {
       expiraEmSegundos: tokens.expiraEmSegundos,
       coSessao,
       st_expiracao: expiraEm.toISOString(),
+      finalidade: usuario.co_finalidade,
       usuario: {
         id: usuario.id_usuario,
         no_usuario: usuario.no_usuario,

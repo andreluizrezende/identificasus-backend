@@ -42,6 +42,13 @@ export interface SessaoAberta {
   coSessao: string;
   /** Instante em que a sessão offline caduca, em ISO-8601. */
   st_expiracao: string;
+  /**
+   * Finalidade da conta, a mesma que vai no token. Não é segredo; está aqui
+   * para o cliente que só serve a uma finalidade recusar na tela de entrar,
+   * em vez de deixar a pessoa entrar e esbarrar num 403 (o console da
+   * regulação só serve a ADJUDICACAO).
+   */
+  finalidade: string | null;
   usuario: {
     id: number;
     no_usuario: string;
