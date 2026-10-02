@@ -31,7 +31,7 @@ próxima revisão de segurança.
 
 | Credencial | Onde trocar | Depois de trocar, atualizar |
 |---|---|---|
-| Senha do `usr_samu` (MySQL `dbsamu` na CloudClusters) | painel da CloudClusters | `DATABASE_URL`, `DATABASE_URL_AUDITORIA`, `DATABASE_URL_PESQUISA` e `DATABASE_URL_ADMINISTRACAO` em Production na Vercel |
+| Senha do `usr_samu` (MySQL `dbsamu` na CloudClusters) | painel da CloudClusters | `DATABASE_URL`, `DATABASE_URL_AUDITORIA`, `DATABASE_URL_PESQUISA`, `DATABASE_URL_ADMINISTRACAO` e `DATABASE_URL_ADJUDICACAO` em Production na Vercel |
 | ~~Senha da caixa `suporte@cicatribio.com.br` (SMTP)~~ | **Trocada em 2026-10-01** e conferida em produção (o e-mail de recuperação chegou) | — |
 
 **Ordem para não derrubar a produção:**
@@ -50,8 +50,8 @@ próxima revisão de segurança.
    if ($url -match '\s|"') { "URL com espaco ou aspas" } else { Set-Clipboard -Value $url; "URL copiada" }
    ```
 
-   O mesmo valor vai nas quatro: `DATABASE_URL`, `DATABASE_URL_AUDITORIA`,
-   `DATABASE_URL_PESQUISA` e `DATABASE_URL_ADMINISTRACAO`.
+   O mesmo valor vai nas cinco: `DATABASE_URL`, `DATABASE_URL_AUDITORIA`,
+   `DATABASE_URL_PESQUISA`, `DATABASE_URL_ADMINISTRACAO` e `DATABASE_URL_ADJUDICACAO`.
 3. Fazer o redeploy da produção: variável nova só vale depois dele.
 4. Conferir: o login com um aparelho cadastrado deve responder 401 para uma
    senha errada (e não 500), e "perdi minha senha" deve entregar o e-mail.
@@ -79,10 +79,15 @@ sem passar pela conversa.
 **Situação (2026-10-01):** a base de produção é um MySQL 8.0.26 gerenciado na
 CloudClusters (`dbsamu`). O único usuário disponível, `usr_samu`, tem
 `ALL PRIVILEGES` em `dbsamu.*`, mas não tem `CREATE USER` nem `GRANT OPTION`.
-Por isso `db/02_usuarios_por_finalidade.sql` não foi aplicado, e as quatro
+Por isso `db/02_usuarios_por_finalidade.sql` não foi aplicado, e as cinco
 variáveis de produção na Vercel (`DATABASE_URL`, `DATABASE_URL_AUDITORIA`,
-`DATABASE_URL_PESQUISA`, `DATABASE_URL_ADMINISTRACAO`) apontam para o mesmo
-`usr_samu`.
+`DATABASE_URL_PESQUISA`, `DATABASE_URL_ADMINISTRACAO`,
+`DATABASE_URL_ADJUDICACAO`) apontam para o mesmo `usr_samu`.
+
+**`DATABASE_URL_ADJUDICACAO` faltou na montagem da produção** (achado em
+2026-10-02, no primeiro acesso do console): toda rota do console da regulação
+respondia 500. Cria-se com `scripts/configurar-adjudicacao-producao.ps1`, que
+pede a senha do `usr_samu`, testa no banco, grava a variável e refaz o deploy.
 
 O que deixa de valer em produção enquanto isso não for resolvido:
 
