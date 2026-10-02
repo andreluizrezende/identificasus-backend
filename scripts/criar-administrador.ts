@@ -31,7 +31,7 @@ import {
   SENHAS_NO_HISTORICO, SENHA_MINIMA, cifrarSenha, motivoDaRecusa, senhaJaUsada,
 } from '../src/acesso/senha';
 
-const FINALIDADES = ['ASSISTENCIAL', 'AUDITORIA', 'PESQUISA', 'ADMINISTRACAO'];
+const FINALIDADES = ['ASSISTENCIAL', 'AUDITORIA', 'PESQUISA', 'ADMINISTRACAO', 'ADJUDICACAO'];
 
 interface LinhaId extends RowDataPacket { id_usuario: number }
 interface LinhaExistente extends RowDataPacket { id_usuario: number; ds_senha_hash: string | null }

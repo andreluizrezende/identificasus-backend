@@ -32,6 +32,10 @@ export const URL_TESTE =
   process.env.DATABASE_URL_TESTE ??
   'mysql://nri_assistencial:trocar@127.0.0.1:3306/dbsamu';
 
+export const URL_ADJUDICACAO_TESTE =
+  process.env.DATABASE_URL_ADJUDICACAO_TESTE ??
+  'mysql://nri_adjudicacao:trocar@127.0.0.1:3306/dbsamu';
+
 export const URL_AUDITORIA_TESTE =
   process.env.DATABASE_URL_AUDITORIA_TESTE ??
   'mysql://nri_auditoria:trocar@127.0.0.1:3306/dbsamu';
@@ -47,6 +51,7 @@ export function acessoDeTeste(): BancoPorFinalidade {
     get: (chave: string): string | undefined => {
       if (chave === 'DATABASE_URL_AUDITORIA') return URL_AUDITORIA_TESTE;
       if (chave === 'DATABASE_URL_PESQUISA') return URL_AUDITORIA_TESTE;
+      if (chave === 'DATABASE_URL_ADJUDICACAO') return URL_ADJUDICACAO_TESTE;
       if (chave.startsWith('DATABASE_URL')) return URL_TESTE;
       return process.env[chave];
     },
@@ -169,7 +174,7 @@ export async function limparCenario(cen: Cenario): Promise<void> {
 }
 
 let sequencia = 0;
-function cpfDeTeste(): string {
+export function cpfDeTeste(): string {
   // Faixa que a Receita não emite; e o dígito verificador não é validado pelo
   // banco, só o formato. Serve para teste e não colide com pessoa real.
   sequencia += 1;

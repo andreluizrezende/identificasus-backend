@@ -11,6 +11,7 @@ import { CasoModule } from './modulos/caso/caso.module';
 import { CatalogoModule } from './modulos/catalogo/catalogo.module';
 import { MidiaModule } from './modulos/midia/midia.module';
 import { RecuperacaoModule } from './modulos/recuperacao/recuperacao.module';
+import { RegulacaoModule } from './modulos/regulacao/regulacao.module';
 import { SessaoModule } from './modulos/sessao/sessao.module';
 import { SincronizacaoModule } from './modulos/sincronizacao/sincronizacao.module';
 import { TurnoModule } from './modulos/turno/turno.module';
@@ -31,6 +32,7 @@ import { TurnoModule } from './modulos/turno/turno.module';
     SincronizacaoModule,
     MidiaModule,
     RecuperacaoModule,
+    RegulacaoModule,
     SessaoModule,
   ],
   providers: [

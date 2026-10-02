@@ -110,6 +110,7 @@ export class BancoPorFinalidade implements OnModuleDestroy {
       finalidade === 'AUDITORIA' ? 'DATABASE_URL_AUDITORIA'
       : finalidade === 'PESQUISA' ? 'DATABASE_URL_PESQUISA'
       : finalidade === 'ADMINISTRACAO' ? 'DATABASE_URL_ADMINISTRACAO'
+      : finalidade === 'ADJUDICACAO' ? 'DATABASE_URL_ADJUDICACAO'
       : 'DATABASE_URL';
     const url = this.config.get<string>(chave) ?? process.env[chave];
     if (!url) throw new Error(`Variavel ${chave} nao configurada.`);

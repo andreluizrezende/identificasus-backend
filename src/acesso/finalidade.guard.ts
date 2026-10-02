@@ -28,25 +28,30 @@ export class FinalidadeGuard implements CanActivate {
     ]);
     if (publico === true) return true;
 
-    const exigida = this.reflector.getAllAndOverride<Finalidade | undefined>(CHAVE_FINALIDADE, [
-      contexto.getHandler(),
-      contexto.getClass(),
-    ]);
+    const declarada = this.reflector.getAllAndOverride<Finalidade | Finalidade[] | undefined>(
+      CHAVE_FINALIDADE,
+      [contexto.getHandler(), contexto.getClass()],
+    );
+    const aceitas = declarada === undefined ? [] : ([] as Finalidade[]).concat(declarada);
 
     // Rota sem finalidade declarada nao passa: falha fechado, por escolha.
-    if (!exigida) throw new ForbiddenException({ mensagem: 'Rota sem finalidade declarada.' });
+    if (aceitas.length === 0) {
+      throw new ForbiddenException({ mensagem: 'Rota sem finalidade declarada.' });
+    }
 
     const req = contexto.switchToHttp().getRequest<RequisicaoComToken>();
     const doToken = req.user?.purpose;
 
-    if (!ehFinalidade(doToken) || doToken !== exigida) {
+    if (!ehFinalidade(doToken) || !aceitas.includes(doToken)) {
       // Tentativa negada e registrada como evento de severidade alta (RF-06.06).
       throw new ForbiddenException({
         mensagem: 'Este acesso nao esta autorizado para a finalidade da sua sessao.',
       });
     }
 
-    req.finalidade = exigida;
+    // A finalidade da requisicao e a do token, que ja provou estar entre as
+    // aceitas pela rota.
+    req.finalidade = doToken;
     return true;
   }
 }

@@ -57,8 +57,11 @@ export class SessaoController {
     }
   }
 
+  // Sair vale para qualquer finalidade: e a propria sessao, e o console da
+  // regulacao (ADJUDICACAO) tambem precisa encerrar a sua. O UPDATE em
+  // mob_sessao continua pelo pool assistencial, dono da tabela de sessoes.
   @Delete()
-  @ExigeFinalidade('ASSISTENCIAL')
+  @ExigeFinalidade('ASSISTENCIAL', 'ADJUDICACAO')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Sair: encerra a sessão local' })
   @UsePipes(new ZodValidacaoPipe(esquemaSaida))
