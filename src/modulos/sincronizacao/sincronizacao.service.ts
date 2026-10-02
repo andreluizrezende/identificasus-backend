@@ -3,6 +3,7 @@ import {
 } from '@nestjs/common';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
+import { chaveDoAparelho } from '@/comum/numero';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
 import { CapturaService } from '@/modulos/captura/captura.service';
 import { CasoService } from '@/modulos/caso/caso.service';
@@ -330,9 +331,11 @@ export class SincronizacaoService {
     //     corrigindo o próprio registro não é conflito — é a correção que o
     //     versionamento existe para guardar. Tratar isso como divergência
     //     encheria a fila de adjudicação com o trabalho normal do campo.
+    //     A comparacao e pela chave (comum/numero.ts): codigo do termo dos dois
+    //     lados, numero como numero, data como data.
     const conflita =
       noServidor !== null &&
-      noServidor.valor !== doDispositivo &&
+      noServidor.chave !== chaveDoAparelho(noServidor.tpDado, a) &&
       noServidor.idUsuario !== ctx.usuarioId;
 
     if (conflita) {

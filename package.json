@@ -23,6 +23,7 @@
     "db:historico": "mysql --defaults-group-suffix=identificasus < db/07_historico_de_senhas.sql",
     "db:adjudicacao": "mysql --defaults-group-suffix=identificasus < db/08_finalidade_adjudicacao.sql",
     "db:fila-e-trilha": "mysql --defaults-group-suffix=identificasus < db/09_fila_e_trilha.sql",
+    "db:valor-tipado": "mysql --defaults-group-suffix=identificasus < db/10_valor_tipado_e_historico.sql",
     "db:usuarios": "mysql --defaults-group-suffix=identificasus < db/02_usuarios_por_finalidade.sql",
     "criar-administrador": "node --import tsx scripts/criar-administrador.ts",
     "test:banco": "vitest run --config vitest.banco.config.ts",

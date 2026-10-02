@@ -114,6 +114,39 @@ describe('sincronização contra o banco', () => {
     }
   });
 
+  it('(!) numero e data vao para a coluna do tipo (db/10), e o mesmo numero de um colega nao diverge', async () => {
+    const coCaso = `NN-${cen.sufixo.slice(-8)}-N`;
+    await sinc.aplicarLote(loteDeAbertura(coCaso), cen.idUsuarioA);
+    const evento = (coAtributo: string, dsValor: string) => ({
+      coIdempotencia: randomUUID(), tipo: 'ATRIBUTO' as const, coCaso, capturadoEm: new Date().toISOString(),
+      conteudo: { coAtributo, coProcedencia: 'ESTIMADO', dsValor },
+    });
+    await sinc.aplicarLote({ coDispositivo, eventos: [evento('ESTATURA', '1.80'), evento('DATA_HORA', '2027-05-04')] }, cen.idUsuarioA);
+
+    const c = await conexao();
+    try {
+      const [linhas] = await c.query<RowDataPacket[]>(
+        `SELECT t.co_atributo, a.ds_valor, a.vl_numerico, a.dt_valor
+           FROM mob_caso_atributo a JOIN mob_tipo_atributo t USING (id_tipo_atributo)
+           JOIN mob_caso k USING (id_caso)
+          WHERE k.co_caso = ? AND a.lg_vigente = 1 ORDER BY t.co_atributo`, [coCaso],
+      );
+      expect(linhas).toEqual([
+        expect.objectContaining({ co_atributo: 'DATA_HORA', ds_valor: null, dt_valor: '2027-05-04' }),
+        expect.objectContaining({ co_atributo: 'ESTATURA', ds_valor: null, vl_numerico: '1.800' }),
+      ]);
+    } finally {
+      await c.end();
+    }
+
+    // O colega manda "1.8" (sem o zero): e o mesmo numero, nao divergencia.
+    const r = await sinc.aplicarLote({ coDispositivo, eventos: [evento('ESTATURA', '1.8')] }, cen.idUsuarioB);
+    expect(r.divergentes).toHaveLength(0);
+    const detalhe = await casos.porCodigo(coCaso, cen.idUsuarioA);
+    expect(detalhe.atributos.find((x) => x.coAtributo === 'ESTATURA')?.valor).toBe('1,8');
+    expect(detalhe.atributos.find((x) => x.coAtributo === 'DATA_HORA')?.valor).toBe('04/05/2027');
+  });
+
   it('fechamento reenviado nao puxa de volta para a fila um caso ja decidido', async () => {
     const coCaso = `NN-${cen.sufixo.slice(-8)}-R`;
     await sinc.aplicarLote(loteDeAbertura(coCaso), cen.idUsuarioA);

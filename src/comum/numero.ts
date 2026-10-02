@@ -13,13 +13,52 @@ export function numeroLegivel(vl: string | null): string | null {
   return Number(limpo).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 }
 
+const NUMERO = /^-?\d+(\.\d+)?$/;
+const DATA = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** "2026-10-01" -> "01/10/2026". Texto que nao e data volta como veio. */
+export function dataLegivel(dt: string | null): string | null {
+  if (dt === null) return null;
+  const m = DATA.exec(dt.trim().slice(0, 10));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : dt;
+}
+
+/**
+ * Chave para comparar o valor que chega do aparelho com o vigente no servidor.
+ *
+ * (!) COMPARA O MESMO TIPO DE COISA DOS DOIS LADOS. Antes a sincronizacao
+ *     comparava a DESCRICAO do termo no servidor ("Feminino") com o CODIGO que
+ *     o aparelho manda, e o mesmo termo registrado por um colega virava
+ *     divergencia falsa. E, com numero e data gravados no tipo certo (db/10),
+ *     "1.80" do aparelho e 1.800 do banco sao o mesmo valor.
+ */
+export function chaveDoAparelho(tpDado: string | null, v: { coValor?: string | null; dsValor?: string | null }): string {
+  if (v.coValor) return `T:${v.coValor}`;
+  const texto = (v.dsValor ?? '').trim();
+  if (tpDado === 'N' && NUMERO.test(texto)) return `N:${Number(texto)}`;
+  if (tpDado === 'D' && DATA.test(texto)) return `D:${texto}`;
+  return `X:${texto}`;
+}
+
+export function chaveDoServidor(l: {
+  tp_dado: string | null;
+  co_termo: string | null;
+  ds_valor: string | null;
+  vl_numerico: string | null;
+  dt_valor: string | null;
+}): string {
+  if (l.co_termo !== null) return `T:${l.co_termo}`;
+  if (l.vl_numerico !== null) return `N:${Number(l.vl_numerico)}`;
+  if (l.dt_valor !== null) return `D:${l.dt_valor.slice(0, 10)}`;
+  return chaveDoAparelho(l.tp_dado, { dsValor: l.ds_valor });
+}
+
 /**
  * O valor de um atributo como sai para a tela. Termo controlado ganha do texto,
  * que ganha do número, que ganha da data (só uma coluna é preenchida por vez).
  *
- * (!) ATRIBUTO NUMÉRICO CHEGA COMO TEXTO. A gravação (sp_mob_registra_atributo)
- *     só recebe texto, então a estatura fica em `ds_valor` ("1.80") e não em
- *     `vl_numerico`. Para `tp_dado = 'N'`, o texto também é formatado.
+ * Número e data saem no formato brasileiro, venham da coluna do tipo (db/10)
+ * ou de texto gravado antes dela.
  */
 export function valorDoAtributo(l: {
   tp_dado?: string | null;
@@ -29,6 +68,10 @@ export function valorDoAtributo(l: {
   dt_valor: string | null;
 }): string | null {
   if (l.no_termo !== null) return l.no_termo;
-  if (l.ds_valor !== null) return l.tp_dado === 'N' ? numeroLegivel(l.ds_valor) : l.ds_valor;
-  return numeroLegivel(l.vl_numerico) ?? l.dt_valor;
+  if (l.ds_valor !== null) {
+    if (l.tp_dado === 'N') return numeroLegivel(l.ds_valor);
+    if (l.tp_dado === 'D') return dataLegivel(l.ds_valor);
+    return l.ds_valor;
+  }
+  return numeroLegivel(l.vl_numerico) ?? dataLegivel(l.dt_valor);
 }

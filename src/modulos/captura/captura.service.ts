@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
+import { chaveDoServidor, valorDoAtributo } from '@/comum/numero';
 
 export interface Atributo {
   idCaso: number;
@@ -17,7 +18,12 @@ export interface Atributo {
 
 export interface ValorVigente {
   idTipoAtributo: number;
+  /** `tp_dado` do atributo: T, N, D, L ou B. */
+  tpDado: string;
+  /** Como a tela mostra (e como vai para mob_divergencia). */
   valor: string;
+  /** Para comparar com o que chega do aparelho (comum/numero.ts). */
+  chave: string;
   idUsuario: number;
   noUsuario: string;
 }
@@ -30,9 +36,12 @@ interface LinhaTipo extends RowDataPacket { id_tipo_atributo: number; tp_dado: s
 interface LinhaId extends RowDataPacket { id: number }
 interface LinhaVigente extends RowDataPacket {
   id_tipo_atributo: number;
+  tp_dado: string;
   ds_valor: string | null;
   vl_numerico: string | null;
+  dt_valor: string | null;
   no_termo: string | null;
+  co_termo: string | null;
   id_usuario: number;
   no_usuario: string;
 }
@@ -87,8 +96,8 @@ export class CapturaService {
   async valorVigente(idCaso: number, coAtributo: string): Promise<ValorVigente | null> {
     const linhas = await this.acesso.consultar<LinhaVigente>(
       'ASSISTENCIAL',
-      `SELECT a.id_tipo_atributo, a.ds_valor, a.vl_numerico,
-              v.ds_valor AS no_termo, a.id_usuario, u.no_usuario
+      `SELECT a.id_tipo_atributo, t.tp_dado, a.ds_valor, a.vl_numerico, a.dt_valor,
+              v.ds_valor AS no_termo, v.co_valor AS co_termo, a.id_usuario, u.no_usuario
          FROM mob_caso_atributo a
          JOIN mob_tipo_atributo t ON t.id_tipo_atributo = a.id_tipo_atributo
          JOIN mob_usuario u ON u.id_usuario = a.id_usuario
@@ -100,11 +109,13 @@ export class CapturaService {
 
     const l = linhas[0];
     if (!l) return null;
-    const valor = l.no_termo ?? l.ds_valor ?? l.vl_numerico;
+    const valor = valorDoAtributo(l);
     if (valor === null) return null;
     return {
       idTipoAtributo: l.id_tipo_atributo,
+      tpDado: l.tp_dado,
       valor,
+      chave: chaveDoServidor(l),
       idUsuario: l.id_usuario,
       noUsuario: l.no_usuario,
     };

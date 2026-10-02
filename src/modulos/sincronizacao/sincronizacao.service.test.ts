@@ -185,7 +185,7 @@ describe('evento ATRIBUTO — regra de divergencia', () => {
 
   it('mesmo profissional corrigindo o proprio registro NAO e divergencia', async () => {
     const { acesso, casos, captura, turnos, auditoria } = montar({
-      valorVigente: { idTipoAtributo: 1, valor: 'FEMININO', idUsuario: 1, noUsuario: 'Ana' },
+      valorVigente: { idTipoAtributo: 1, tpDado: 'L', valor: 'Feminino', chave: 'T:FEMININO', idUsuario: 1, noUsuario: 'Ana' },
     });
     const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
     const r = await servico.aplicarLote(
@@ -198,14 +198,14 @@ describe('evento ATRIBUTO — regra de divergencia', () => {
 
   it('valor diferente gravado por OUTRO profissional gera divergencia e nao sobrescreve', async () => {
     const { acesso, casos, captura, turnos, auditoria, executar } = montar({
-      valorVigente: { idTipoAtributo: 1, valor: 'FEMININO', idUsuario: 2, noUsuario: 'Beto' },
+      valorVigente: { idTipoAtributo: 1, tpDado: 'L', valor: 'Feminino', chave: 'T:FEMININO', idUsuario: 2, noUsuario: 'Beto' },
     });
     const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
     const r = await servico.aplicarLote(
       { coDispositivo: 'D1', eventos: [eventoAtributo('123e4567-e89b-12d3-a456-426614174000', conteudo)] }, 1,
     );
     expect(r.divergentes).toHaveLength(1);
-    expect(r.divergentes[0]).toMatchObject({ valorDispositivo: 'MASCULINO', valorServidor: 'FEMININO' });
+    expect(r.divergentes[0]).toMatchObject({ valorDispositivo: 'MASCULINO', valorServidor: 'Feminino' });
     expect(r.aplicados).toEqual([]); // nao entra em aplicados: fila local se mantem
     expect(captura.registrarAtributo).not.toHaveBeenCalled();
     expect(executar).toHaveBeenCalledWith(
@@ -213,9 +213,11 @@ describe('evento ATRIBUTO — regra de divergencia', () => {
     );
   });
 
-  it('mesmo valor de outro profissional nao e divergencia', async () => {
+  it('(!) mesmo termo de outro profissional nao e divergencia, mesmo com descricao diferente do codigo', async () => {
+    // Antes comparava a descricao do servidor ("Masculino") com o codigo do
+    // aparelho ("MASCULINO"), e o mesmo termo virava divergencia falsa.
     const { acesso, casos, captura, turnos, auditoria } = montar({
-      valorVigente: { idTipoAtributo: 1, valor: 'MASCULINO', idUsuario: 2, noUsuario: 'Beto' },
+      valorVigente: { idTipoAtributo: 1, tpDado: 'L', valor: 'Masculino', chave: 'T:MASCULINO', idUsuario: 2, noUsuario: 'Beto' },
     });
     const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
     const r = await servico.aplicarLote(
@@ -223,6 +225,24 @@ describe('evento ATRIBUTO — regra de divergencia', () => {
     );
     expect(r.divergentes).toEqual([]);
     expect(r.aplicados).toHaveLength(1);
+  });
+
+  it.each([
+    ['1.80', 'N:1.8', false],
+    ['1.8', 'N:1.8', false],
+    ['1.75', 'N:1.8', true],
+  ])('(!) numero: "%s" do aparelho contra %s no servidor -> divergencia %s', async (doAparelho, chave, diverge) => {
+    const { acesso, casos, captura, turnos, auditoria } = montar({
+      valorVigente: { idTipoAtributo: 8, tpDado: 'N', valor: '1,8', chave, idUsuario: 2, noUsuario: 'Beto' },
+    });
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+    const r = await servico.aplicarLote({
+      coDispositivo: 'D1',
+      eventos: [eventoAtributo('123e4567-e89b-12d3-a456-426614174000', {
+        coAtributo: 'ESTATURA', coProcedencia: 'ESTIMADO', dsValor: doAparelho,
+      })],
+    }, 1);
+    expect(r.divergentes).toHaveLength(diverge ? 1 : 0);
   });
 });
 
