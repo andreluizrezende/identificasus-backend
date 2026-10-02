@@ -39,10 +39,13 @@ export class SincronizacaoController {
   @Post('divergencia/:id/resolver')
   @ExigeFinalidade('ASSISTENCIAL')
   @ApiOperation({ summary: 'Decide qual valor vale: dispositivo, servidor ou os dois (RF-11.02)' })
-  @UsePipes(new ZodValidacaoPipe(esquemaResolucaoDivergencia))
   resolverDivergencia(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dados: ResolucaoDivergencia,
+    // (!) Pipe so no corpo. Com @UsePipes no metodo, o :id da URL tambem era
+    //     validado contra este esquema, e TODA resolucao voltava 400: a tela
+    //     de divergencia do app nunca conseguiu gravar uma decisao. Pego por
+    //     sincronizacao.controller.http.test.ts.
+    @Body(new ZodValidacaoPipe(esquemaResolucaoDivergencia)) dados: ResolucaoDivergencia,
     @Req() req: RequisicaoAutenticada,
   ): Promise<void> {
     return this.servico.resolver(id, req.user?.usuarioId ?? 0, dados);

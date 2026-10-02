@@ -1,8 +1,9 @@
-import { Controller, Get, Param, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Req } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ExigeFinalidade } from '@/acesso/finalidade.decorator';
-import { RegulacaoService } from './regulacao.service';
-import type { CasoParaRegulacao, ItemDaFila } from './regulacao.service';
+import { ZodValidacaoPipe } from '@/comum/zod-validacao.pipe';
+import { RegulacaoService, esquemaDecisao } from './regulacao.service';
+import type { CasoParaRegulacao, Decisao, ItemDaFila } from './regulacao.service';
 import { FotosDaRegulacaoService } from './fotos.service';
 import type { FotoParaRegulacao } from './fotos.service';
 
@@ -28,6 +29,21 @@ export class RegulacaoController {
   @ApiOperation({ summary: 'Detalhe de um caso da fila: atributos, procedência e histórico' })
   caso(@Param('coCaso') coCaso: string, @Req() req: RequisicaoAutenticada): Promise<CasoParaRegulacao> {
     return this.servico.caso(coCaso, req.user?.usuarioId ?? 0);
+  }
+
+  @Post('casos/:coCaso/decisao')
+  @HttpCode(200)
+  @ExigeFinalidade('ADJUDICACAO')
+  @ApiOperation({ summary: 'Decide o caso da fila: não resolvido ou perícia, com motivo e autor' })
+  decidir(
+    @Param('coCaso') coCaso: string,
+    // (!) Pipe so no corpo: @UsePipes no metodo validaria o :coCaso da URL
+    //     contra o esquema do corpo, e toda decisao voltaria 400.
+    @Body(new ZodValidacaoPipe(esquemaDecisao)) dados: Decisao,
+    @Req() req: RequisicaoAutenticada,
+  ): Promise<{ coCaso: string; stCaso: string }> {
+    // Autor vem do token, nunca do corpo.
+    return this.servico.decidir(coCaso, req.user?.usuarioId ?? 0, dados);
   }
 }
 

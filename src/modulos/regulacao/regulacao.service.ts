@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
-import type { RowDataPacket } from 'mysql2/promise';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import { z } from 'zod';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
 import { valorDoAtributo } from '@/comum/numero';
@@ -9,6 +10,23 @@ export const ESTADOS_DA_FILA = ['ANALISE', 'ADJUDICACAO'] as const;
 
 /** Teto da fila numa resposta: a central trabalha pelo topo, por prazo. */
 export const LIMITE_DA_FILA = 500;
+
+/** Decisões que a regulação já pode registrar (ver `decidir`). */
+export const DECISOES = ['NAO_RESOLVIDO', 'PERICIA'] as const;
+export const MOTIVO_MINIMO = 10;
+
+export const esquemaDecisao = z.object({
+  decisao: z.enum(DECISOES),
+  // Cabe em mob_caso_estado.ds_motivo (300). Mínimo para não virar "ok".
+  motivo: z.string().trim().min(MOTIVO_MINIMO).max(300),
+});
+export type Decisao = z.infer<typeof esquemaDecisao>;
+
+interface LinhaIdDoCaso extends RowDataPacket {
+  id_caso: number;
+  co_caso: string;
+  st_caso: string;
+}
 
 export interface ItemDaFila {
   coCaso: string;
@@ -190,6 +208,61 @@ export class RegulacaoService {
       atributos,
       historico,
     };
+  }
+
+  /**
+   * Decisão do caso pela regulação (US-31): tira o caso da fila com autor e
+   * motivo.
+   *
+   * (!) SÓ "NÃO RESOLVIDO" E "PERÍCIA", POR ENQUANTO. "Resolvido" exige dizer
+   *     a quem o caso foi vinculado, e isso só existe com a comparação de
+   *     candidatos (US-29) e a dupla conferência (US-30). Perícia aqui é o
+   *     registro da decisão; o envio ao IML continua fora do sistema (US-33).
+   *
+   * (!) MOTIVO OBRIGATÓRIO, NO HISTÓRICO, E NÃO NA TRILHA. O motivo vai para
+   *     mob_caso_estado pelo gatilho (db/09), com o autor. A trilha registra
+   *     quem decidiu o quê; o texto do motivo pode citar a pessoa, e a trilha
+   *     não é lugar de dado de caso.
+   *
+   * (!) A MUDANÇA SÓ ACONTECE SE O CASO AINDA ESTIVER NA FILA, e isso é
+   *     conferido no próprio UPDATE (`affectedRows`). Duas estações decidindo
+   *     o mesmo caso ao mesmo tempo: a segunda recebe "já não está na fila".
+   */
+  async decidir(coCaso: string, usuarioId: number, dados: Decisao): Promise<{ coCaso: string; stCaso: string }> {
+    const caso = await this.acesso.emTransacao('ADJUDICACAO', async (executar, consultar) => {
+      const linhas = await consultar<LinhaIdDoCaso>(
+        'SELECT id_caso, co_caso, st_caso FROM mob_caso WHERE co_caso = ? LIMIT 1',
+        [coCaso],
+      );
+      const atual = linhas[0];
+      if (!atual || !ESTADOS_DA_FILA.some((e) => e === atual.st_caso)) {
+        throw new NotFoundException({ mensagem: 'Caso não encontrado na fila da regulação.' });
+      }
+      await executar('SET @mob_transicao_usuario = ?, @mob_transicao_motivo = ?', [usuarioId, dados.motivo]);
+      try {
+        const r: ResultSetHeader = await executar(
+          'UPDATE mob_caso SET st_caso = ? WHERE id_caso = ? AND st_caso IN (?, ?)',
+          [dados.decisao, atual.id_caso, ...ESTADOS_DA_FILA],
+        );
+        if (r.affectedRows !== 1) {
+          throw new ConflictException({ mensagem: 'Este caso acabou de sair da fila: outra pessoa já o decidiu.' });
+        }
+      } finally {
+        await executar('SET @mob_transicao_usuario = NULL, @mob_transicao_motivo = NULL');
+      }
+      return atual;
+    });
+
+    await this.auditoria.registrar({
+      usuarioId,
+      finalidade: 'ADJUDICACAO',
+      acao: 'regulacao_caso_decidido',
+      recurso: `regulacao/casos/${caso.co_caso}`,
+      casoId: caso.id_caso,
+      detalhe: { de: caso.st_caso, para: dados.decisao },
+    });
+
+    return { coCaso: caso.co_caso, stCaso: dados.decisao };
   }
 
   private async atributosDe(idCaso: number): Promise<AtributoParaRegulacao[]> {

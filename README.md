@@ -9,7 +9,7 @@ Central de Regulação.
 | Cliente | Finalidade | Rotas |
 |---|---|---|
 | `identificasus-app` (campo) | `ASSISTENCIAL` | sessão, turno, catálogo, caso, captura, sincronização, mídia |
-| `identificasus-web` (regulação) | `ADJUDICACAO` | sessão, `regulacao/fila`, `regulacao/casos/:coCaso` |
+| `identificasus-web` (regulação) | `ADJUDICACAO` | sessão, `regulacao/fila`, `regulacao/casos/:coCaso`, `.../fotos`, `.../decisao` |
 
 **O sistema sugere; a decisão é humana.** Nenhum caminho de código deste serviço
 cria vínculo sem duas conferências independentes.
@@ -181,7 +181,7 @@ src/
     ├── sincronizacao/  lote idempotente vindo do aparelho
     ├── midia/          token de upload direto pro Vercel Blob (identificasus-fotos)
     ├── recuperacao/    "perdi minha senha"
-    ├── regulacao/      fila e detalhe do caso para o console (finalidade ADJUDICACAO)
+    ├── regulacao/      fila, detalhe, fotos e decisão do caso para o console (ADJUDICACAO)
     └── auditoria/      trilha encadeada (módulo-folha)
 db/
 ├── 01_estrutura.sql               DDL do dbsamu (20 tabelas)
@@ -265,8 +265,9 @@ falhavam em silêncio.
 ## Pendências
 
 - Outbox transacional e publicação na RNDS.
-- Console da Central de Regulação: fila e detalhe do caso prontos
-  (`regulacao/`). Falta comparação, dupla conferência e adjudicação, que
+- Console da Central de Regulação: fila, detalhe, fotos e decisão (não
+  resolvido ou perícia, com motivo e autor) prontos (`regulacao/`). Falta
+  comparação, dupla conferência e o desfecho "resolvido", que
   esperam a definição da **fonte de candidatos**: o `dbsamu` não tem tabela de
   desaparecidos, registros hospitalares nem outra base contra a qual comparar.
   As tabelas novas usam o prefixo `web_`, e os grants de escrita de
