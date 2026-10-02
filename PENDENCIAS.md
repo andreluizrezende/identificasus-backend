@@ -96,18 +96,10 @@ O que deixa de valer em produção enquanto isso não for resolvido:
 O que continua valendo: o `FinalidadeGuard` (a rota exige a finalidade do
 token) e a escolha do pool por finalidade no código.
 
-Aplicado em produção: `db/01`, `03`, `05`, `06`, `07`, `08` e `09` (as duas últimas em 2026-10-02), sem os `CREATE USER`,
+Aplicado em produção: `db/01`, `03`, `05`, `06`, `07`, `08`, `09` e `10` (as três últimas em 2026-10-02), sem os `CREATE USER`,
 `GRANT` e `FLUSH PRIVILEGES`. `db/04_homologacao.sql` não foi aplicado: não há
 aparelho cadastrado, então ninguém consegue entrar até alguém cadastrar um em
 `mob_dispositivo`.
-
-**Falta aplicar em produção: `db/10`.** A procedure de gravação passa a pôr
-número em `vl_numerico` e data em `dt_valor` (antes ia tudo para `ds_valor`), o
-que já está gravado é convertido, e saem as linhas duplicadas que o gatilho
-antigo deixava no histórico. O backend funciona antes ou depois dela; a
-gravação tipada só começa depois. Usa `DELIMITER`, que o
-`scripts/aplicar-migracao-producao.ps1` entende desde esta migração; o GRANT
-que ela tem é pulado, como sempre. Pode ser reaplicada.
 
 **Verificação noturna da trilha:** criar a variável `CRON_SECRET` em Production
 na Vercel (comando para gerar em `.env.example`). Sem ela, o agendamento de
