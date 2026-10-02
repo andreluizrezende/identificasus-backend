@@ -44,6 +44,15 @@ export class BancoPorFinalidade implements OnModuleDestroy {
       timezone: 'Z',
       namedPlaceholders: false,
     });
+    // (!) A SESSAO DO BANCO RODA EM UTC, seja qual for o fuso do servidor.
+    //     `timezone: 'Z'` acima so muda como o driver converte datas; o
+    //     CURRENT_TIMESTAMP dos DEFAULTs (captura, transicao de estado,
+    //     encerramento) seguia o fuso do servidor e era lido como UTC pelas
+    //     telas. Num banco em America/Sao_Paulo, o historico saia 3 h antes.
+    //     O SET entra na fila da conexao nova antes de qualquer consulta dela.
+    pool.on('connection', (conexao) => {
+      (conexao as unknown as { query(sql: string): unknown }).query("SET time_zone = '+00:00'");
+    });
     this.pools.set(finalidade, pool);
     this.log.log(`pool aberto para a finalidade ${finalidade}`);
     return pool;

@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RowDataPacket } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
+import { valorDoAtributo } from '@/comum/numero';
 
 /** Estados em que o caso espera a Central de Regulação (ver ck_mob_caso_st_caso). */
 export const ESTADOS_DA_FILA = ['ANALISE', 'ADJUDICACAO'] as const;
@@ -72,6 +73,7 @@ interface LinhaAtributo extends RowDataPacket {
   no_atributo: string;
   co_grupo: string;
   no_grupo: string;
+  tp_dado: string;
   ds_valor: string | null;
   vl_numerico: string | null;
   dt_valor: string | null;
@@ -193,7 +195,7 @@ export class RegulacaoService {
   private async atributosDe(idCaso: number): Promise<AtributoParaRegulacao[]> {
     const linhas = await this.acesso.consultar<LinhaAtributo>(
       'ADJUDICACAO',
-      `SELECT t.co_atributo, t.no_atributo, g.co_grupo, g.no_grupo,
+      `SELECT t.co_atributo, t.no_atributo, t.tp_dado, g.co_grupo, g.no_grupo,
               a.ds_valor, a.vl_numerico, a.dt_valor, v.ds_valor AS no_termo,
               p.co_procedencia, p.ds_procedencia, a.st_captura, u.no_usuario
          FROM mob_caso_atributo a
@@ -211,8 +213,7 @@ export class RegulacaoService {
       noAtributo: l.no_atributo,
       coGrupo: l.co_grupo,
       noGrupo: l.no_grupo,
-      // Mesma precedência do módulo de campo: termo controlado, texto, número, data.
-      valor: l.no_termo ?? l.ds_valor ?? numeroLegivel(l.vl_numerico) ?? l.dt_valor,
+      valor: valorDoAtributo(l),
       coProcedencia: l.co_procedencia,
       dsProcedencia: l.ds_procedencia,
       capturadoEm: l.st_captura,
@@ -253,13 +254,3 @@ function itemDaFila(l: LinhaFila): ItemDaFila {
   };
 }
 
-/**
- * DECIMAL(12,3) chega como "1.720". Na tela da regulação isso se lê "mil
- * setecentos e vinte": o número sai no formato brasileiro e sem zeros à
- * direita ("1,72").
- */
-function numeroLegivel(vl: string | null): string | null {
-  if (vl === null) return null;
-  const n = Number(vl);
-  return Number.isFinite(n) ? n.toLocaleString('pt-BR', { maximumFractionDigits: 3 }) : vl;
-}

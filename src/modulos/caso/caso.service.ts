@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2/promise';
 import { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import type { Parametros } from '@/acesso/banco-por-finalidade.service';
+import { valorDoAtributo } from '@/comum/numero';
 
 export interface CasoResumo {
   coCaso: string;
@@ -76,6 +77,7 @@ interface LinhaAtributo extends RowDataPacket {
   co_atributo: string;
   no_atributo: string;
   co_grupo: string;
+  tp_dado: string;
   ds_valor: string | null;
   vl_numerico: string | null;
   dt_valor: string | null;
@@ -272,7 +274,7 @@ export class CasoService {
   private async atributosDe(idCaso: number): Promise<AtributoDoCaso[]> {
     const linhas = await this.acesso.consultar<LinhaAtributo>(
       'ASSISTENCIAL',
-      `SELECT t.co_atributo, t.no_atributo, g.co_grupo,
+      `SELECT t.co_atributo, t.no_atributo, t.tp_dado, g.co_grupo,
               a.ds_valor, a.vl_numerico, a.dt_valor, v.ds_valor AS no_termo,
               p.co_procedencia, a.st_captura, u.no_usuario
          FROM mob_caso_atributo a
@@ -290,10 +292,9 @@ export class CasoService {
       coAtributo: l.co_atributo,
       noAtributo: l.no_atributo,
       coGrupo: l.co_grupo,
-      // A ordem é a da especificidade: termo controlado ganha do texto livre,
-      // que ganha do número, que ganha da data. Uma coluna só é preenchida por
-      // vez — ck_mob_caso_atributo_valor garante que ao menos uma seja.
-      valor: l.no_termo ?? l.ds_valor ?? l.vl_numerico ?? l.dt_valor,
+      // Termo controlado, texto, número, data — e número no formato
+      // brasileiro, também quando chega como texto (comum/numero.ts).
+      valor: valorDoAtributo(l),
       coProcedencia: l.co_procedencia,
       capturadoEm: l.st_captura,
       noAutor: l.no_usuario,
