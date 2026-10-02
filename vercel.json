@@ -1,5 +1,16 @@
 {
   "buildCommand": "npm run build && mkdir -p public && echo 'API sem site estatico; tudo cai em /api.' > public/index.html",
   "outputDirectory": "public",
-  "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/api"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/auditoria/verificacao",
+      "schedule": "0 6 * * *"
+    }
+  ]
 }

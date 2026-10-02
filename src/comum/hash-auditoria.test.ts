@@ -18,6 +18,8 @@ describe('cadeia de auditoria', () => {
   it('mudar qualquer campo muda o hash', () => {
     const base = calcularElo(ELO_GENESE, elo);
     expect(calcularElo(ELO_GENESE, { ...elo, acao: 'OUTRA' })).not.toBe(base);
+    expect(calcularElo(ELO_GENESE, { ...elo, casoId: 9 })).not.toBe(base);
+    expect(calcularElo(ELO_GENESE, { ...elo, dispositivoId: 4 })).not.toBe(base);
     expect(calcularElo('f'.repeat(64), elo)).not.toBe(base);
   });
 

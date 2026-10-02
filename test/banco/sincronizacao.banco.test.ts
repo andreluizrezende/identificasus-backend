@@ -5,6 +5,7 @@ import { CapturaService } from '@/modulos/captura/captura.service';
 import { CasoService } from '@/modulos/caso/caso.service';
 import { SincronizacaoService } from '@/modulos/sincronizacao/sincronizacao.service';
 import { TurnoService } from '@/modulos/turno/turno.service';
+import { RegulacaoService } from '@/modulos/regulacao/regulacao.service';
 import { AuditoriaService } from '@/modulos/auditoria/auditoria.service';
 import type { BancoPorFinalidade } from '@/acesso/banco-por-finalidade.service';
 import type { Lote } from '@/modulos/sincronizacao/sincronizacao.esquemas';
@@ -73,6 +74,61 @@ describe('sincronização contra o banco', () => {
     expect(doOutro.map((c) => c.coCaso)).not.toContain(coCaso);
     // Mesma resposta de "não existe": um 403 contaria que o caso existe.
     await expect(casos.porCodigo(coCaso, cen.idUsuarioB)).rejects.toThrow();
+  });
+
+  it('fechar a captura em campo marca o caso como enviado para a equipe', async () => {
+    const coCaso = `NN-${cen.sufixo.slice(-8)}-F`;
+    const lote = loteDeAbertura(coCaso);
+    lote.eventos.push({
+      coIdempotencia: randomUUID(),
+      tipo: 'ESTADO',
+      coCaso,
+      capturadoEm: new Date().toISOString(),
+      conteudo: { stAtual: 'ENRIQUECIMENTO', dsMotivo: 'captura encerrada em campo' },
+    });
+    const r = await sinc.aplicarLote(lote, cen.idUsuarioA);
+    expect(r.recusados).toHaveLength(0);
+
+    const meu = (await casos.meusCasos(cen.idUsuarioA)).find((c) => c.coCaso === coCaso);
+    // Decisao do produto (02/10/2026): fechar a captura poe o caso na fila.
+    expect(meu?.stCaso).toBe('ANALISE');
+    expect(meu?.enviadoEm).not.toBeNull();
+
+    const fila = await new RegulacaoService(acessoDeTeste(), new AuditoriaService(acessoDeTeste())).fila(cen.idUsuarioA);
+    expect(fila.map((i) => i.coCaso)).toContain(coCaso);
+
+    // (!) Uma linha de historico por transicao, todas com autor (db/09).
+    const c = await conexao();
+    try {
+      const [hist] = await c.query<RowDataPacket[]>(
+        `SELECT e.st_anterior, e.st_atual, e.id_usuario
+           FROM mob_caso_estado e JOIN mob_caso k USING (id_caso)
+          WHERE k.co_caso = ? ORDER BY e.id_caso_estado`, [coCaso],
+      );
+      expect(hist.map((h) => `${h.st_anterior ?? '-'}>${h.st_atual}`)).toEqual([
+        '->ABERTO', 'ABERTO>ENRIQUECIMENTO', 'ENRIQUECIMENTO>ANALISE',
+      ]);
+      expect(hist.every((h) => h.id_usuario === cen.idUsuarioA)).toBe(true);
+    } finally {
+      await c.end();
+    }
+  });
+
+  it('fechamento reenviado nao puxa de volta para a fila um caso ja decidido', async () => {
+    const coCaso = `NN-${cen.sufixo.slice(-8)}-R`;
+    await sinc.aplicarLote(loteDeAbertura(coCaso), cen.idUsuarioA);
+    const id = await casos.idPorCodigo(coCaso);
+    await casos.transitar(Number(id), 'RESOLVIDO', cen.idUsuarioA, 'decidido na regulacao');
+
+    await sinc.aplicarLote({
+      coDispositivo,
+      eventos: [{
+        coIdempotencia: randomUUID(), tipo: 'ESTADO', coCaso, capturadoEm: new Date().toISOString(),
+        conteudo: { stAtual: 'ENRIQUECIMENTO', dsMotivo: 'captura encerrada em campo' },
+      }],
+    }, cen.idUsuarioA);
+
+    expect((await casos.meusCasos(cen.idUsuarioA)).find((k) => k.coCaso === coCaso)?.stCaso).toBe('RESOLVIDO');
   });
 
   it('reenviar o mesmo lote não duplica nada', async () => {

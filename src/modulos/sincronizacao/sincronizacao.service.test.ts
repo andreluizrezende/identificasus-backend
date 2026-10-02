@@ -237,7 +237,29 @@ describe('evento ESTADO', () => {
     expect(casos.confirmarEnvio).toHaveBeenCalledWith(1);
   });
 
-  it('estado que nao e ENCERRADO nao confirma envio', async () => {
+  it('(!) o fechamento do campo (ENRIQUECIMENTO) confirma o envio: e o que o app manda ao fechar', async () => {
+    const evento = eventoEstado('123e4567-e89b-12d3-a456-426614174000');
+    evento.conteudo = { stAtual: 'ENRIQUECIMENTO', dsMotivo: 'captura encerrada em campo' };
+    const { acesso, casos, captura, turnos, auditoria } = montar({});
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+    await servico.aplicarLote({ coDispositivo: 'D1', eventos: [evento] }, 1);
+    expect(casos.confirmarEnvio).toHaveBeenCalledWith(1);
+  });
+
+  it('(!) fechar a captura poe o caso na fila da regulacao, so a partir do campo', async () => {
+    const evento = eventoEstado('123e4567-e89b-12d3-a456-426614174000');
+    evento.conteudo = { stAtual: 'ENRIQUECIMENTO', dsMotivo: 'captura encerrada em campo' };
+    const { acesso, casos, captura, turnos, auditoria } = montar({});
+    const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
+    await servico.aplicarLote({ coDispositivo: 'D1', eventos: [evento] }, 1);
+
+    expect(casos.transitar).toHaveBeenNthCalledWith(1, 1, 'ENRIQUECIMENTO', 1, 'captura encerrada em campo', ['ABERTO']);
+    expect(casos.transitar).toHaveBeenNthCalledWith(
+      2, 1, 'ANALISE', 1, 'entrou na fila da regulacao ao fechar a captura', ['ENRIQUECIMENTO'],
+    );
+  });
+
+  it('outros estados nao confirmam envio', async () => {
     const { acesso, casos, captura, turnos, auditoria } = montar({});
     const servico = new SincronizacaoService(acesso, casos, captura, turnos, auditoria);
     await servico.aplicarLote({ coDispositivo: 'D1', eventos: [eventoEstado('123e4567-e89b-12d3-a456-426614174000')] }, 1);

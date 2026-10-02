@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
 
+/**
+ * Tudo o que um elo gravado diz, e nada que nao esteja gravado: a verificacao
+ * recalcula o hash a partir da linha de `mob_auditoria` (`id` = `co_elo`).
+ */
 export interface EloAuditoria {
   id: string;
   ocorridoEm: string;
@@ -8,6 +12,8 @@ export interface EloAuditoria {
   acao: string;
   recurso: string;
   detalhe: unknown;
+  dispositivoId?: number | null;
+  casoId?: number | null;
 }
 
 /**
@@ -24,9 +30,12 @@ export function canonizar(valor: unknown): string {
 }
 
 export function calcularElo(anterior: string, elo: EloAuditoria): string {
+  // (!) APARELHO E CASO ENTRAM NO HASH. Estavam gravados na linha e fora do
+  //     material: trocar o caso de um evento nao mudava o hash.
   const material = [
     anterior, elo.id, elo.ocorridoEm, String(elo.usuarioId),
     elo.finalidade, elo.acao, elo.recurso, canonizar(elo.detalhe),
+    String(elo.dispositivoId ?? ''), String(elo.casoId ?? ''),
   ].join('|');
   return createHash('sha256').update(material, 'utf8').digest('hex');
 }

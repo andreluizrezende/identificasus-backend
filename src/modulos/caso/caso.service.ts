@@ -212,24 +212,41 @@ export class CasoService {
     });
   }
 
-  /** Transição de estado com autor e motivo. Nenhum estado muda sem os dois. */
+  /**
+   * Transição de estado com autor e motivo. Nenhum estado muda sem os dois.
+   *
+   * (!) QUEM GRAVA O HISTÓRICO É O GATILHO, e esta função só informa autor e
+   *     motivo a ele, em variáveis da sessão (db/09). Antes as duas coisas
+   *     gravavam uma linha cada, e toda transição saía em dobro, metade sem
+   *     autor. As variáveis voltam a nulo na mesma transação: a conexão volta
+   *     para o pool, e o próximo UPDATE não pode herdar o autor deste.
+   *
+   * `somenteDe`: só transita se o estado atual estiver na lista. É o que
+   * impede um fechamento de campo reenviado de puxar de volta para a fila um
+   * caso que a regulação já decidiu.
+   *
+   * Devolve `true` quando o estado mudou.
+   */
   async transitar(
     idCaso: number, novoEstado: string, usuarioId: number, motivo?: string,
-  ): Promise<void> {
-    await this.acesso.emTransacao('ASSISTENCIAL', async (executar, consultar) => {
+    somenteDe?: readonly string[],
+  ): Promise<boolean> {
+    return this.acesso.emTransacao('ASSISTENCIAL', async (executar, consultar) => {
       const atual = await consultar<RowDataPacket & { st_caso: string }>(
         'SELECT st_caso FROM mob_caso WHERE id_caso = ? FOR UPDATE',
         [idCaso],
       );
       const anterior = atual[0]?.st_caso ?? null;
-      if (anterior === novoEstado) return;
+      if (anterior === novoEstado) return false;
+      if (somenteDe && (anterior === null || !somenteDe.includes(anterior))) return false;
 
-      await executar('UPDATE mob_caso SET st_caso = ? WHERE id_caso = ?', [novoEstado, idCaso]);
-      await executar(
-        `INSERT INTO mob_caso_estado (id_caso, st_anterior, st_atual, id_usuario, ds_motivo)
-         VALUES (?, ?, ?, ?, ?)`,
-        [idCaso, anterior, novoEstado, usuarioId, motivo ?? null],
-      );
+      await executar('SET @mob_transicao_usuario = ?, @mob_transicao_motivo = ?', [usuarioId, motivo ?? null]);
+      try {
+        await executar('UPDATE mob_caso SET st_caso = ? WHERE id_caso = ?', [novoEstado, idCaso]);
+      } finally {
+        await executar('SET @mob_transicao_usuario = NULL, @mob_transicao_motivo = NULL');
+      }
+      return true;
     });
   }
 

@@ -12,6 +12,9 @@ import {
 } from './sincronizacao.esquemas';
 import type { EventoEntrada, Lote, ResolucaoDivergencia, RespostaLote } from './sincronizacao.esquemas';
 
+/** Estados que, ao chegar, dizem que o caso saiu do aparelho (ver aplicarEstado). */
+const ESTADOS_QUE_CONFIRMAM_ENVIO = new Set(['ENRIQUECIMENTO', 'ENCERRADO']);
+
 const DUPLICADO = 'ER_DUP_ENTRY';
 
 interface LinhaDispositivo extends RowDataPacket { id_dispositivo: number; id_base: number }
@@ -376,8 +379,26 @@ export class SincronizacaoService {
     const e = esquemaConteudoEstado.parse(evento.conteudo);
     const idCaso = await this.exigirCaso(evento.coCaso);
     await this.vincular(idEvento, idCaso);
-    await this.casos.transitar(idCaso, e.stAtual, ctx.usuarioId, e.dsMotivo ?? undefined);
-    if (e.stAtual === 'ENCERRADO') await this.casos.confirmarEnvio(idCaso);
+    if (e.stAtual === 'ENRIQUECIMENTO') {
+      // (!) FECHAR A CAPTURA POE O CASO NA FILA DA REGULACAO (decisao do
+      //     produto, 02/10/2026). Antes o caso parava em ENRIQUECIMENTO e
+      //     nenhum caminho o levava a ANALISE: a fila nunca recebia caso real.
+      //     As duas transicoes ficam no historico, com o autor do fechamento.
+      //     So a partir do campo: um fechamento reenviado nao puxa de volta
+      //     para a fila um caso que a regulacao ja decidiu.
+      await this.casos.transitar(idCaso, 'ENRIQUECIMENTO', ctx.usuarioId, e.dsMotivo ?? undefined, ['ABERTO']);
+      await this.casos.transitar(
+        idCaso, 'ANALISE', ctx.usuarioId, 'entrou na fila da regulacao ao fechar a captura', ['ENRIQUECIMENTO'],
+      );
+    } else {
+      await this.casos.transitar(idCaso, e.stAtual, ctx.usuarioId, e.dsMotivo ?? undefined);
+    }
+    // (!) O ENVIO SE CONFIRMA NO FECHAMENTO DO CAMPO. O app fecha a captura
+    //     mandando ENRIQUECIMENTO ("o caso saiu do campo", dados/captura.ts);
+    //     ENCERRADO e o fim do caso, ja na regulacao, e nenhum caminho do campo
+    //     chega la. Esperando so ENCERRADO, todo caso aparecia "nao enviado"
+    //     para a equipe mesmo depois de ter chegado.
+    if (ESTADOS_QUE_CONFIRMAM_ENVIO.has(e.stAtual)) await this.casos.confirmarEnvio(idCaso);
   }
 
   private async aplicarMidia(

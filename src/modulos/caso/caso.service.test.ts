@@ -79,16 +79,47 @@ describe('transitar', () => {
     expect(executar).not.toHaveBeenCalled();
   });
 
-  it('registra a transicao com o estado anterior quando muda', async () => {
+  function montarTransicao(estadoAtual: string) {
     const executar = vi.fn().mockResolvedValue({});
-    const consultar = vi.fn().mockResolvedValue([{ st_caso: 'ABERTO' }]);
+    const consultar = vi.fn().mockResolvedValue([{ st_caso: estadoAtual }]);
     const acesso = {
       emTransacao: vi.fn(async (_f: string, corpo: (...a: unknown[]) => unknown) => corpo(executar, consultar)),
     } as unknown as BancoPorFinalidade;
+    return { servico: new CasoService(acesso), executar, sqls: () => executar.mock.calls.map((c) => String(c[0])) };
+  }
 
-    await new CasoService(acesso).transitar(1, 'ENCERRADO', 7, 'concluido em campo');
-    expect(executar).toHaveBeenCalledTimes(2);
-    expect(executar.mock.calls[1]?.[1]).toEqual([1, 'ABERTO', 'ENCERRADO', 7, 'concluido em campo']);
+  it('(!) informa autor e motivo ao gatilho, muda o estado e limpa as variaveis; nao grava historico em dobro', async () => {
+    const { servico, executar, sqls } = montarTransicao('ABERTO');
+    await expect(servico.transitar(1, 'ENCERRADO', 7, 'concluido em campo')).resolves.toBe(true);
+
+    expect(sqls()).toEqual([
+      'SET @mob_transicao_usuario = ?, @mob_transicao_motivo = ?',
+      'UPDATE mob_caso SET st_caso = ? WHERE id_caso = ?',
+      'SET @mob_transicao_usuario = NULL, @mob_transicao_motivo = NULL',
+    ]);
+    expect(executar.mock.calls[0]?.[1]).toEqual([7, 'concluido em campo']);
+    expect(sqls().some((s) => s.includes('INSERT INTO mob_caso_estado'))).toBe(false);
+  });
+
+  it('as variaveis sao limpas mesmo se o UPDATE falhar (a conexao volta ao pool)', async () => {
+    const { servico, executar, sqls } = montarTransicao('ABERTO');
+    executar.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('UPDATE')) throw new Error('falhou');
+      return {};
+    });
+    await expect(servico.transitar(1, 'ANALISE', 7)).rejects.toThrow('falhou');
+    expect(sqls().at(-1)).toBe('SET @mob_transicao_usuario = NULL, @mob_transicao_motivo = NULL');
+  });
+
+  it('somenteDe: nao transita se o estado atual nao esta na lista', async () => {
+    const { servico, executar } = montarTransicao('RESOLVIDO');
+    await expect(servico.transitar(1, 'ANALISE', 7, undefined, ['ENRIQUECIMENTO'])).resolves.toBe(false);
+    expect(executar).not.toHaveBeenCalled();
+  });
+
+  it('somenteDe: transita quando o estado atual esta na lista', async () => {
+    const { servico } = montarTransicao('ENRIQUECIMENTO');
+    await expect(servico.transitar(1, 'ANALISE', 7, undefined, ['ENRIQUECIMENTO'])).resolves.toBe(true);
   });
 });
 
