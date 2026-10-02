@@ -23,6 +23,12 @@ GRANT SELECT, INSERT, UPDATE ON dbsamu.mob_sessao         TO 'nri_assistencial'@
 -- pedidos e o que denuncia um ataque em andamento.
 GRANT SELECT, INSERT, UPDATE ON dbsamu.mob_recuperacao    TO 'nri_assistencial'@'%';
 GRANT SELECT, INSERT         ON dbsamu.mob_turno          TO 'nri_assistencial'@'%';
+-- (!) ENCERRAR O TURNO E UM UPDATE, e so destas duas colunas. Sem este grant o
+--     "Encerrar" respondia 500 e o turno ficava aberto para sempre; nenhum teste
+--     de unidade via, porque o banco era duble (achado por
+--     test/banco/turno.banco.test.ts). Por coluna: a aplicacao fecha o turno,
+--     mas nao muda base, viatura, aparelho nem horario de um plantao registrado.
+GRANT UPDATE (st_turno, st_encerramento) ON dbsamu.mob_turno TO 'nri_assistencial'@'%';
 GRANT SELECT, INSERT         ON dbsamu.mob_turno_guarnicao TO 'nri_assistencial'@'%';
 GRANT SELECT ON dbsamu.mob_usuario          TO 'nri_assistencial'@'%';
 -- (!) UPDATE DE UMA COLUNA SO, e nao da tabela. `st_credenciais_alteradas` e o
